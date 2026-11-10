@@ -1,0 +1,6 @@
+[package]
+name = "encore-encode"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]

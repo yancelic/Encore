@@ -22,3 +22,35 @@ rustc-ice-*.txt
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# Frontend / Node (apps/ui)
+node_modules/
+apps/ui/dist/
+*.tsbuildinfo
+npm-debug.log*
+
+# Tauri generated schemas
+apps/ui/src-tauri/gen/schemas/
+
+# Bundled third-party tools (place ffmpeg.exe in tools/ locally; exceeds GitHub 100 MB limit)
+tools/*.exe
+tools/*.dll
+
+# Local test recordings & media outputs
+*.mp4
+*.mkv
+*.m4a
+*.wav
+
+# Environment, local databases, logs, and OS files
+.env
+.env.*
+*.log
+*.db
+*.sqlite
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Internal development handoff notes
+HANDOFF.md

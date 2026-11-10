@@ -1,0 +1,29 @@
+[package]
+name = "encore-ui"
+edition.workspace = true
+version.workspace = true
+
+[lib]
+name = "encore_ui_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7.4", features = [] }
+
+[dependencies]
+encore-clipstore = { path = "../../../crates/clipstore" }
+encore-common = { path = "../../../crates/common" }
+encore-editor = { path = "../../../crates/editor" }
+rfd = "0.18.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+tauri = { version = "2.12.5", features = ["protocol-asset", "tray-icon"] }
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+    "Win32_UI_WindowsAndMessaging",
+] }

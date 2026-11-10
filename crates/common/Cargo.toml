@@ -1,0 +1,10 @@
+[package]
+name = "encore-common"
+edition.workspace = true
+version.workspace = true
+
+[dependencies]
+global-hotkey = "0.10.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+wasapi = "0.27.0"

@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = ["crates/common", "crates/encode", "crates/clipstore", "crates/editor", "apps/recorder", "apps/ui/src-tauri"]
+
+[workspace.package]
+edition = "2021"
+version = "0.1.0"
