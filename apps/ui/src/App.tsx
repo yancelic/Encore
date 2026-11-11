@@ -34,6 +34,7 @@ export function App() {
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [clips, setClips] = useState<ClipRecord[]>([]);
+  const [allGames, setAllGames] = useState<string[]>([]);
   const [loadingClips, setLoadingClips] = useState<boolean>(true);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
 
@@ -68,6 +69,11 @@ export function App() {
         sort: sortOrder,
       });
       setClips(list);
+      // Keep navigation stable while a search or collection narrows the results.
+      setAllGames(previous => {
+        const games = list.map(clip => clip.game);
+        return Array.from(new Set(search || gameFilter || favoritesOnly ? [...previous, ...games] : games)).sort((a, b) => a.localeCompare(b));
+      });
     } catch (e) {
       pushToast('error', `Failed loading clips: ${String(e)}`);
     } finally {
@@ -120,12 +126,6 @@ export function App() {
     () => clips.find((c) => c.id === activeClipId) ?? null,
     [clips, activeClipId],
   );
-
-  const allGames = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of clips) set.add(c.game);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [clips]);
 
   const handleStartRecorder = async () => {
     setBusyAction('start');

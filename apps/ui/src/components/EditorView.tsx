@@ -58,9 +58,9 @@ interface EditorViewProps {
 }
 
 const TRACK_META = [
-  { label: 'Game Audio', color: '#16C9B3', icon: Gamepad2 },
-  { label: 'Chat Audio', color: '#3B82F6', icon: Users },
-  { label: 'Microphone', color: '#F59E0B', icon: Mic },
+  { label: 'Game audio', color: '#bfd5e2', icon: Gamepad2 },
+  { label: 'Chat audio', color: '#ecebf3', icon: Users },
+  { label: 'Microphone', color: '#8da6b5', icon: Mic },
 ] as const;
 
 interface WaveformCanvasProps {
@@ -325,6 +325,7 @@ export function EditorView({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
+      if (el?.closest('dialog') || document.querySelector('dialog[open]')) return;
       const isRange = el instanceof HTMLInputElement && el.type === 'range';
       if (
         el &&
@@ -507,7 +508,7 @@ export function EditorView({
         <div className="editor-meta-left">
           <button className="btn-ghost" onClick={onBack}>
             <ArrowLeft size={15} />
-            All Clips
+            All replays
           </button>
           <span className="editor-divider" aria-hidden="true" />
           <span style={{ fontWeight: 700 }}>{clip.game}</span>
@@ -590,7 +591,7 @@ export function EditorView({
             <div className="monitor-chin mono">
               <span className="monitor-tally">
                 <span className={`monitor-tally-led ${playing ? 'playing' : ''}`} />
-                Encore Master Monitor
+                {clip.title}
               </span>
               <span>
                 {clip.width}×{clip.height} · {Math.round(clip.fps)} FPS
@@ -601,19 +602,21 @@ export function EditorView({
 
         <aside className="inspector-pane">
           <div className="inspector-section">
-            <span className="inspector-label">Canvas Size</span>
+            <span className="inspector-label">Export format</span>
             <div className="canvas-toggle">
               <button
                 className={`canvas-btn ${canvasMode === 'original' ? 'active' : ''}`}
+                aria-pressed={canvasMode === 'original'}
                 onClick={() => setCanvasMode('original')}
               >
-                Original (16:9)
+                Original
               </button>
               <button
                 className={`canvas-btn ${canvasMode === '9:16' ? 'active' : ''}`}
+                aria-pressed={canvasMode === '9:16'}
                 onClick={() => setCanvasMode('9:16')}
               >
-                9:16 Vertical
+                9:16 vertical
               </button>
             </div>
 
@@ -657,11 +660,11 @@ export function EditorView({
           </div>
 
           <div className="inspector-section">
-            <span className="inspector-label">Clip Details</span>
+            <span className="inspector-label">Clip details</span>
             <div className="field-group">
-              <label>Title</label>
+              <label htmlFor="clip-title">Title</label>
               <input
-                type="text"
+                type="text" id="clip-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={handleSaveDetails}
@@ -669,10 +672,10 @@ export function EditorView({
             </div>
 
             <div className="field-group">
-              <label>Tag</label>
+              <label htmlFor="clip-tag">Tag</label>
               <input
                 type="text"
-                placeholder="e.g. Clutch, Ace, Flick"
+                id="clip-tag" placeholder="e.g. Clutch, Ace, Flick"
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
                 onBlur={handleSaveDetails}
@@ -680,9 +683,9 @@ export function EditorView({
             </div>
 
             <div className="field-group">
-              <label>Notes</label>
+              <label htmlFor="clip-notes">Notes</label>
               <textarea
-                rows={2}
+                rows={2} id="clip-notes"
                 placeholder="Add description or timestamp notes..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -691,13 +694,13 @@ export function EditorView({
             </div>
 
             <button className="btn-secondary" onClick={handleSaveDetails}>
-              {detailsSaved ? <Check size={14} color="#16C9B3" /> : <Sparkles size={14} />}
+              {detailsSaved ? <Check size={14} /> : <Sparkles size={14} />}
               {detailsSaved ? 'Saved Details' : 'Save Details'}
             </button>
           </div>
 
           <div className="inspector-section" style={{ marginTop: 'auto' }}>
-            <span className="inspector-label">File Actions</span>
+            <span className="inspector-label">Clip file</span>
             <button className="btn-secondary" onClick={() => onRevealClip(clip.path)}>
               <FolderOpen size={14} />
               Show in Explorer
@@ -828,7 +831,7 @@ export function EditorView({
         </div>
 
         <div className="tracks-board">
-          {/* Engraved Metallic Timeline Ruler */}
+          {/* Ruler and lanes share one horizontal coordinate system. */}
           <div className="timeline-ruler-row">
             <div className="timeline-ruler-spacer">Timeline</div>
             <div className="timeline-ruler" onPointerDown={startScrub} title="Click or drag to scrub">
@@ -852,7 +855,7 @@ export function EditorView({
           <div className="track-row video-lane">
             <div className="track-label-col">
               <span className="track-name">
-                <span className="track-swatch" style={{ background: '#16C9B3', color: '#16C9B3' }} />
+                <span className="track-swatch" style={{ background: 'var(--pale-sky)' }} />
                 Video ({Math.round(clip.fps)}fps)
               </span>
               <span className="mono" style={{ fontSize: 10, color: 'var(--ink-engraved)' }}>
@@ -981,6 +984,7 @@ export function EditorView({
             );
           })}
         </div>
+        <p className="timeline-help">Space to play · I / O to set trim · Arrow keys to step through frames</p>
       </section>
     </div>
   );

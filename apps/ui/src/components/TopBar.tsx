@@ -9,7 +9,7 @@ import {
   Settings,
   Square,
 } from 'lucide-react';
-import encoreIcon from '../assets/encore-icon.png';
+import encoreIcon from '../assets/encore-mark.svg';
 import type { CaptureMode, Config, RecorderStatus } from '../types';
 
 interface TopBarProps {
@@ -66,15 +66,13 @@ export function TopBar({
 
   return (
     <header className="top-bar">
-      <div className="brand">
-        <div className="brand-mark-bezel" aria-hidden="true">
-          <img className="brand-mark-img" src={encoreIcon} alt="" />
-        </div>
-        <span className="brand-title">Encore</span>
+      <div className="brand" aria-label="Encore">
+        <img className="brand-mark-img" src={encoreIcon} alt="" />
+        <span className="brand-title">encore<span className="brand-period">.</span></span>
       </div>
 
       <div className="top-center">
-        <div className="status-pill" title={status?.error ?? statusText}>
+        <div className="status-pill" role="status" title={status?.error ?? statusText}>
           <span className={`status-dot ${dotClass}`} />
           <span className="status-label">{statusText}</span>
         </div>
@@ -107,6 +105,7 @@ export function TopBar({
               onClick={onStopRecorder}
               disabled={busyAction === 'stop'}
               title="Stop background recorder"
+              aria-label="Stop background recorder"
             >
               <Square size={12} fill="currentColor" />
             </button>
@@ -116,6 +115,7 @@ export function TopBar({
         <div className="mode-switch" role="group" aria-label="Capture Mode">
           <button
             className={mode === 'GameDetection' ? 'active' : ''}
+            aria-pressed={mode === 'GameDetection'}
             onClick={() => mode !== 'GameDetection' && onChangeMode('GameDetection')}
             disabled={busyAction === 'mode'}
             title="Automatically record supported games"
@@ -125,12 +125,13 @@ export function TopBar({
           </button>
           <button
             className={mode === 'ActiveWindow' ? 'active' : ''}
+            aria-pressed={mode === 'ActiveWindow'}
             onClick={() => mode !== 'ActiveWindow' && onChangeMode('ActiveWindow')}
             disabled={busyAction === 'mode'}
             title="Record whichever window is currently focused"
           >
             <Monitor size={13} />
-            Active Window
+            Window
           </button>
         </div>
       </div>
@@ -153,11 +154,11 @@ export function TopBar({
           <strong>{hotkey}</strong>
         </button>
 
-        <button className="btn-icon" onClick={onOpenFolder} title="Open Clips folder">
+        <button className="btn-icon" onClick={onOpenFolder} title="Open clips folder" aria-label="Open clips folder">
           <FolderOpen size={15} />
         </button>
 
-        <button className="btn-icon" onClick={onRefreshClips} title="Rescan Clips folder">
+        <button className="btn-icon" onClick={onRefreshClips} title="Rescan clips folder" aria-label="Rescan clips folder">
           <RefreshCw size={15} />
         </button>
 

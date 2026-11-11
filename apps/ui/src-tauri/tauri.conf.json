@@ -5,7 +5,7 @@
   "identifier": "com.encore.clipper",
   "build": {
     "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:5173",
+    "devUrl": "http://localhost:1420",
     "beforeBuildCommand": "npm run build",
     "frontendDist": "../dist"
   },
@@ -18,7 +18,7 @@
         "minWidth": 1020,
         "minHeight": 660,
         "resizable": true,
-        "backgroundColor": "#111318"
+        "backgroundColor": "#ecebf3"
       }
     ],
     "security": {
