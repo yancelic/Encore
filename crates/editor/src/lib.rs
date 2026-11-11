@@ -51,6 +51,79 @@ pub struct TrimOpts<'a> {
     pub track_volumes: &'a [f64],
 }
 
+/// Render a shareable MP4 with accurate trim boundaries and one stereo audio mix.
+/// Source/editing clips keep their independent tracks; players used for sharing
+/// generally play only the first audio stream, so they need a flattened mix.
+pub fn export_share_clip(
+    ffmpeg: &Path,
+    src: &Path,
+    dst: &Path,
+    opts: &TrimOpts<'_>,
+) -> Result<PathBuf, String> {
+    if !opts.start_secs.is_finite() || !opts.end_secs.is_finite()
+        || opts.start_secs < 0.0 || opts.end_secs <= opts.start_secs + 0.05
+    {
+        return Err("Share range must be finite, non-negative and at least 0.05s".into());
+    }
+    if let Some(p) = dst.parent() {
+        std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
+    }
+
+    let mut filter = String::new();
+    let mut inputs = String::new();
+    for i in 0..opts.audio_tracks as usize {
+        let vol = effective_track_volume(opts.muted_tracks, opts.track_volumes, i);
+        filter.push_str(&format!(
+            "[0:a:{i}]volume={vol:.6},aformat=sample_rates=48000:channel_layouts=stereo[a{i}];"
+        ));
+        inputs.push_str(&format!("[a{i}]"));
+    }
+    if opts.audio_tracks > 0 {
+        filter.push_str(&format!(
+            "{inputs}amix=inputs={}:duration=longest:normalize=0[aout]", opts.audio_tracks
+        ));
+    }
+
+    let build_args = |codec: &str| {
+        let mut args: Vec<String> = vec![
+            "-y".into(), "-ss".into(), format!("{:.6}", opts.start_secs),
+            "-i".into(), src.to_string_lossy().into_owned(),
+            "-t".into(), format!("{:.6}", opts.end_secs - opts.start_secs),
+            "-map".into(), "0:v:0".into(),
+        ];
+        if opts.audio_tracks > 0 {
+            args.extend([
+                "-filter_complex".into(), filter.clone(), "-map".into(), "[aout]".into(),
+                "-c:a".into(), "aac".into(), "-b:a".into(), "192k".into(),
+                "-ac".into(), "2".into(), "-disposition:a:0".into(), "default".into(),
+            ]);
+        } else {
+            args.push("-an".into());
+        }
+        // Decoding/re-encoding prevents stream copy from keeping frames before
+        // the selection when the trim start falls between source keyframes.
+        args.extend(["-c:v".into(), codec.into()]);
+        if codec == "h264_nvenc" {
+            args.extend(["-preset".into(), "p4".into(), "-cq".into(), "20".into()]);
+        } else {
+            args.extend(["-preset".into(), "veryfast".into(), "-crf".into(), "20".into()]);
+        }
+        args.extend([
+            "-pix_fmt".into(), "yuv420p".into(), "-movflags".into(), "+faststart".into(),
+            dst.to_string_lossy().into_owned(),
+        ]);
+        args
+    };
+    let nv_args = build_args("h264_nvenc");
+    let nv_refs: Vec<&OsStr> = nv_args.iter().map(OsStr::new).collect();
+    if run_ffmpeg(ffmpeg, &nv_refs).is_err() {
+        let cpu_args = build_args("libx264");
+        let cpu_refs: Vec<&OsStr> = cpu_args.iter().map(OsStr::new).collect();
+        run_ffmpeg(ffmpeg, &cpu_refs)?;
+    }
+    Ok(dst.to_path_buf())
+}
+
 /// Trim `src` to `[start_secs, end_secs]`. Uses instant stream copy when all audio tracks stay at 100%;
 /// otherwise stream-copies video and applies per-track volume/mute filters while preserving track layout.
 pub fn trim_clip(
@@ -427,6 +500,103 @@ mod tests {
         assert_eq!(effective_track_volume(&[], &[], 2), 1.0);
         assert_eq!(effective_track_volume(&[false], &[-0.5], 0), 0.0);
         assert_eq!(effective_track_volume(&[false], &[f64::NAN], 0), 1.0);
+    }
+
+    #[test]
+    fn share_renders_exact_range_and_all_three_sources_in_one_audio_stream() {
+        let ff = test_ffmpeg();
+        let dir = std::env::temp_dir().join(format!("encore_share_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("source.mp4");
+        let output = Command::new(&ff).args([
+            "-y", "-f", "lavfi", "-i",
+            "color=c=red:s=320x180:r=30:d=3,drawbox=color=blue:t=fill:enable='gte(t,1)'",
+            "-f", "lavfi", "-i", "sine=frequency=440:sample_rate=48000:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=48000:duration=3",
+            "-f", "lavfi", "-i", "sine=frequency=1320:sample_rate=48000:duration=3",
+            "-map", "0:v", "-map", "1:a", "-map", "2:a", "-map", "3:a",
+            "-c:v", "libx264", "-g", "300", "-sc_threshold", "0", "-c:a", "aac",
+        ]).arg(&src).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+        let original = std::fs::read(&src).unwrap();
+
+        let opts = TrimOpts {
+            start_secs: 1.25, end_secs: 2.05, audio_tracks: 3,
+            muted_tracks: &[], track_volumes: &[],
+        };
+        let mixed = dir.join("mixed.mp4");
+        export_share_clip(&ff, &src, &mixed, &opts).unwrap();
+
+        let decode_audio = |path: &Path| {
+            let out = Command::new(&ff).args(["-v", "error", "-i"]).arg(path)
+                .args(["-map", "0:a:0", "-ac", "1", "-ar", "48000", "-f", "f32le", "pipe:1"])
+                .output().unwrap();
+            assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+            out.stdout.chunks_exact(4)
+                .map(|b| f32::from_le_bytes(b.try_into().unwrap()) as f64).collect::<Vec<_>>()
+        };
+        let tone_amplitude = |samples: &[f64], hz: f64| {
+            // Ignore AAC boundary padding; detect each source independently.
+            let samples = &samples[4800..samples.len() - 4800];
+            let (mut re, mut im) = (0.0, 0.0);
+            for (i, sample) in samples.iter().enumerate() {
+                let phase = std::f64::consts::TAU * hz * i as f64 / 48000.0;
+                re += sample * phase.cos();
+                im += sample * phase.sin();
+            }
+            2.0 * re.hypot(im) / samples.len() as f64
+        };
+        let samples = decode_audio(&mixed);
+        assert!((samples.len() as f64 / 48000.0 - 0.8).abs() < 0.05);
+        for hz in [440.0, 880.0, 1320.0] {
+            assert!(tone_amplitude(&samples, hz) > 0.06, "missing source tone {hz}");
+        }
+        let info = Command::new(&ff).args(["-hide_banner", "-i"]).arg(&mixed).output().unwrap();
+        let info = String::from_utf8_lossy(&info.stderr);
+        assert_eq!(info.matches("Audio:").count(), 1, "{info}");
+        assert!(info.contains("stereo"), "{info}");
+
+        // The trim starts after the red section, between the source's keyframes.
+        let frame = Command::new(&ff).args(["-v", "error", "-i"]).arg(&mixed)
+            .args(["-map", "0:v:0", "-frames:v", "1", "-pix_fmt", "rgb24", "-f", "rawvideo", "pipe:1"])
+            .output().unwrap();
+        assert!(frame.status.success());
+        assert!(frame.stdout[2] > 200 && frame.stdout[0] < 30, "trim retained pre-selection frames");
+
+        let levels = dir.join("levels.mp4");
+        export_share_clip(&ff, &src, &levels, &TrimOpts {
+            muted_tracks: &[true, false, false], track_volumes: &[1.0, 0.25, 0.5], ..opts
+        }).unwrap();
+        let levels = decode_audio(&levels);
+        assert!(tone_amplitude(&levels, 440.0) < 0.003, "game mute ignored");
+        for (hz, gain) in [(880.0, 0.25), (1320.0, 0.5)] {
+            let ratio = tone_amplitude(&levels, hz) / tone_amplitude(&samples, hz);
+            assert!((ratio - gain).abs() < 0.04, "volume ignored for {hz}: {ratio}");
+        }
+
+        let silent = dir.join("silent.mp4");
+        export_share_clip(&ff, &src, &silent, &TrimOpts {
+            muted_tracks: &[true, true, true], ..opts
+        }).unwrap();
+        assert!(track_peak(&ff, &silent, 0) < 0.001);
+
+        let no_audio = dir.join("no_audio.mp4");
+        let video = Command::new(&ff).args(["-y", "-i"]).arg(&src)
+            .args(["-map", "0:v:0", "-c", "copy", "-an"]).arg(&no_audio).output().unwrap();
+        assert!(video.status.success());
+        let video_share = dir.join("video_share.mp4");
+        export_share_clip(&ff, &no_audio, &video_share, &TrimOpts { audio_tracks: 0, ..opts }).unwrap();
+        let probe = Command::new(&ff).args(["-hide_banner", "-i"]).arg(&video_share).output().unwrap();
+        let probe = String::from_utf8_lossy(&probe.stderr);
+        assert!(probe.contains("Video:") && !probe.contains("Audio:"), "{probe}");
+
+        for (start, end) in [(f64::NAN, 2.0), (0.0, f64::INFINITY), (-1.0, 2.0), (2.0, 1.0)] {
+            assert!(export_share_clip(&ff, &src, &mixed, &TrimOpts {
+                start_secs: start, end_secs: end, ..opts
+            }).is_err());
+        }
+        assert_eq!(std::fs::read(&src).unwrap(), original, "source clip was modified");
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

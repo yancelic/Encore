@@ -1,12 +1,14 @@
 {
   "name": "encore-ui",
   "private": true,
-  "version": "0.4.0",
+  "version": "0.5.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "build:installer": "node scripts/build-installer.mjs",
+    "prepare:update": "node scripts/prepare-update.mjs",
+    "test:updates": "node --test scripts/prepare-update.test.mjs",
     "preview": "vite preview",
     "pretest:ui": "npm run build",
     "test:ui": "playwright test",

@@ -4,7 +4,7 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 
 ## Download
 
-- **Windows Installer (x64):** [Download Encore (`Encore_0.4.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.4.0_x64-setup.exe)
+- **Windows Installer (x64):** [Download Encore (`Encore_0.5.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.5.0_x64-setup.exe)
 - **All Releases:** [GitHub Releases](https://github.com/yancelic/Encore/releases)
 
 > **Requirements:** Windows 10/11 (64-bit). The installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service, and `ffmpeg.exe`.
@@ -18,6 +18,8 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 - **RAM replay history:** Continuously encoded H.264 and three AAC tracks are held in a keyframe-aligned memory buffer. No temporary video segments are written during steady recording. Compressed payloads, including pending saves, share a 512 MiB budget; high-quality settings may retain less than the requested duration. Saving runs on a bounded background worker without restarting the live encoder.
 - **3-track audio capture & mixer:** Separate **Game**, **Chat**, and **Microphone** tracks. Choose output-device routing or Windows application process-tree capture (build 20348+), with any chat executable and automatic reconnect after restart. Existing device settings are preserved. Per-track waveforms, volume controls, and mute toggles are available in the editor.
 - **Clip library & export tools:** Search, filter by game, favorite, trim clips, export `9:16` vertical videos, build multi-clip montages, and copy clip files straight to the Windows clipboard (`CF_HDROP`).
+- **Share the current edit:** Share Clip uses the selected trim range without requiring Save Trim, and combines Game, Chat and Microphone into one stereo audio stream with the selected mute and volume settings. Library Copy also creates a mixed share file. Source clips keep their separate tracks for editing.
+- **Signed in-app updates:** Check for updates at startup or in Settings, then confirm download and restart. Encore verifies the package before stopping recording and waits for accepted saves and exports. Users on 0.4.0 or earlier must install 0.5.0 manually once to enable future in-app updates.
 
 ## Workspace Structure
 
@@ -64,14 +66,27 @@ npm --prefix apps/ui run tauri build
 The NSIS installer is written to:
 
 ```text
-target/release/bundle/nsis/Encore_0.4.0_x64-setup.exe
+target/release/bundle/nsis/Encore_0.5.0_x64-setup.exe
 ```
 
 Building creates the local installer; publishing a GitHub release is a separate step.
+The installer build also signs the update package and generates `latest.json`.
+Signing key setup, publishing instructions, and the one-time transition from
+manual installs are described in [docs/updates.md](docs/updates.md).
 
 ### Appearance
 
 Settings → Appearance offers **System**, **Light**, and **Dark**. System is the default and follows changes to Windows appearance while Encore is open. A manual choice is remembered on this computer and applies throughout the library, editor, timeline, and dialogs. Theme changes take effect immediately, independently of capture settings.
+
+### Adding games
+
+Settings → Games to capture → **Choose running application** lists open application
+windows by title. Find your game and click **Add**, then **Save settings**. The
+executable filename is remembered, so changing window titles and restarting the
+game do not require adding it again. For a game that is not running, use **Browse
+game .exe** and select its actual executable. Manual filename entry remains under
+**Enter executable name manually**. Window discovery runs only when you open or
+refresh the picker, with no extra background polling or game process handles.
 
 ### Tests
 

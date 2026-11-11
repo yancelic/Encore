@@ -3,6 +3,7 @@ import type { CropRect } from './components/CropControls';
 import type {
   AudioDeviceInfo,
   ApplicationAudioOptions,
+  CaptureApplication,
   ClipQuery,
   ClipRecord,
   Config,
@@ -32,6 +33,12 @@ export const listAudioDevices = (): Promise<AudioDeviceInfo[]> =>
 
 export const listAudioApplications = (): Promise<ApplicationAudioOptions> =>
   invoke<ApplicationAudioOptions>('list_audio_applications');
+
+export const listCaptureApplications = (): Promise<CaptureApplication[]> =>
+  invoke<CaptureApplication[]>('list_capture_applications');
+
+export const pickGameExecutable = (): Promise<string | null> =>
+  invoke<string | null>('pick_game_executable');
 
 export const getConfig = (): Promise<Config> =>
   invoke<Config>('get_config');
@@ -102,8 +109,16 @@ export const exportVertical = (
 export const buildMontage = (ids: string[], title: string): Promise<ClipRecord> =>
   invoke<ClipRecord>('build_montage_cmd', { ids, title });
 
-export const copyClipToClipboard = (path: string): Promise<void> =>
-  invoke<void>('copy_clip_to_clipboard', { path });
+export const copyClipToClipboard = (
+  id: string,
+  startSecs?: number,
+  endSecs?: number,
+  mutedTracks?: boolean[],
+  trackVolumes?: number[],
+): Promise<void> =>
+  invoke<void>('copy_clip_to_clipboard', {
+    id, startSecs, endSecs, mutedTracks, trackVolumes,
+  });
 
 export const revealInExplorer = (path: string): Promise<void> =>
   invoke<void>('reveal_in_explorer', { path });

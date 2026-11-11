@@ -40,7 +40,7 @@ interface LibraryViewProps {
   onSortOrderChange: (s: SortOrder) => void;
   onOpenClip: (clip: ClipRecord) => void;
   onToggleFavorite: (clip: ClipRecord) => void;
-  onCopyClip: (clip: ClipRecord) => void;
+  onCopyClip: (clip: ClipRecord) => Promise<boolean>;
   onRevealClip: (clip: ClipRecord) => void;
   onDeleteClip: (clip: ClipRecord) => void;
   onCreateMontage: (selected: ClipRecord[]) => void;
@@ -71,6 +71,7 @@ export function LibraryView({
   const [montageMode, setMontageMode] = useState(false);
   const [selectedClips, setSelectedClips] = useState<ClipRecord[]>([]);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [copyingId, setCopyingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const filtered = Boolean(search || gameFilter || favoritesOnly);
 
@@ -108,18 +109,26 @@ export function LibraryView({
       );
     else onOpenClip(clip);
   };
-  const copyClip = (clip: ClipRecord) => {
-    onCopyClip(clip);
-    setCopiedId(clip.id);
-    window.setTimeout(
-      () => setCopiedId((id) => (id === clip.id ? null : id)),
-      1800,
-    );
+  const copyClip = async (clip: ClipRecord) => {
+    setCopyingId(clip.id);
+    setCopiedId(null);
+    try {
+      if (await onCopyClip(clip)) {
+        setCopiedId(clip.id);
+        window.setTimeout(
+          () => setCopiedId((id) => (id === clip.id ? null : id)),
+          1800,
+        );
+      }
+    } finally {
+      setCopyingId(null);
+    }
   };
   const renderActions = (clip: ClipRecord) => (
     <div className="clip-actions">
       <button
         className={`btn-chip ${copiedId === clip.id ? 'copied' : ''}`}
+        disabled={copyingId !== null}
         onClick={() => copyClip(clip)}
         title="Copy clip file to clipboard"
       >
@@ -128,7 +137,7 @@ export function LibraryView({
         ) : (
           <ClipboardCopy size={14} />
         )}
-        <span>{copiedId === clip.id ? 'Copied' : 'Copy'}</span>
+        <span>{copyingId === clip.id ? 'Preparing...' : copiedId === clip.id ? 'Copied' : 'Copy'}</span>
       </button>
       <button
         className="btn-chip"
