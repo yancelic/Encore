@@ -4,4 +4,8 @@ members = ["crates/common", "crates/encode", "crates/clipstore", "crates/editor"
 
 [workspace.package]
 edition = "2021"
-version = "0.1.0"
+version = "0.2.0"
+authors = ["Encore Contributors"]
+license = "GPL-3.0-only"
+homepage = "https://github.com/yancelic/Encore"
+repository = "https://github.com/yancelic/Encore"

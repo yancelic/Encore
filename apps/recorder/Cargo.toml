@@ -2,6 +2,19 @@
 name = "encore-recorder"
 edition.workspace = true
 version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Encore Background Game & Audio Replay Recorder"
+
+[package.metadata.winres]
+FileDescription = "Encore Background Game & Audio Replay Recorder"
+ProductName = "Encore"
+CompanyName = "Encore"
+LegalCopyright = "Copyright (C) 2026 Encore Contributors (GPL-3.0)"
+OriginalFilename = "encore-recorder.exe"
+InternalName = "encore-recorder"
 
 [dependencies]
 encore-common = { path = "../../crates/common" }

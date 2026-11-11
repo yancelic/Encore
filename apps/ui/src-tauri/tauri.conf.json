@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Encore",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.encore.clipper",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -32,6 +32,11 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Encore",
+    "copyright": "Copyright (C) 2026 Encore Contributors (GPL-3.0)",
+    "shortDescription": "Low-overhead Windows game clipping and multi-track replay studio",
+    "longDescription": "Encore is a low-overhead Windows game clipping and multi-track replay studio built with Rust and Tauri 2.",
+    "homepage": "https://github.com/yancelic/Encore",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -42,6 +47,12 @@
     "resources": {
       "../../../tools/ffmpeg.exe": "ffmpeg.exe",
       "../../../target/release/encore-recorder.exe": "encore-recorder.exe"
+    },
+    "windows": {
+      "nsis": {
+        "compression": "zlib",
+        "installMode": "currentUser"
+      }
     }
   }
 }

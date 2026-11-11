@@ -2,6 +2,19 @@
 name = "encore-ui"
 edition.workspace = true
 version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Encore Game Clipping & Multi-Track Replay Studio"
+
+[package.metadata.tauri-winres]
+FileDescription = "Encore Game Clipping & Multi-Track Replay Studio"
+ProductName = "Encore"
+CompanyName = "Encore"
+LegalCopyright = "Copyright (C) 2026 Encore Contributors (GPL-3.0)"
+OriginalFilename = "encore-ui.exe"
+InternalName = "encore-ui"
 
 [lib]
 name = "encore_ui_lib"
