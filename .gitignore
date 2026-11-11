@@ -54,3 +54,8 @@ desktop.ini
 
 # Internal development handoff notes
 HANDOFF.md
+
+# Local UI snapshots and browser verification output
+.local-backups/
+apps/ui/test-results/
+apps/ui/playwright-report/

@@ -21,6 +21,8 @@ import { LibraryView } from './components/LibraryView';
 import { MontageModal } from './components/MontageModal';
 import { SettingsModal } from './components/SettingsModal';
 import { TopBar } from './components/TopBar';
+import { useTheme } from './theme';
+import type { CropRect } from './components/CropControls';
 import type {
   CaptureMode,
   ClipRecord,
@@ -31,9 +33,11 @@ import type {
 } from './types';
 
 export function App() {
+  const theme = useTheme();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [clips, setClips] = useState<ClipRecord[]>([]);
+  const [allGames, setAllGames] = useState<string[]>([]);
   const [loadingClips, setLoadingClips] = useState<boolean>(true);
   const [activeClipId, setActiveClipId] = useState<string | null>(null);
 
@@ -68,6 +72,11 @@ export function App() {
         sort: sortOrder,
       });
       setClips(list);
+      // Keep navigation stable while a search or collection narrows the results.
+      setAllGames(previous => {
+        const games = list.map(clip => clip.game);
+        return Array.from(new Set(search || gameFilter || favoritesOnly ? [...previous, ...games] : games)).sort((a, b) => a.localeCompare(b));
+      });
     } catch (e) {
       pushToast('error', `Failed loading clips: ${String(e)}`);
     } finally {
@@ -120,12 +129,6 @@ export function App() {
     () => clips.find((c) => c.id === activeClipId) ?? null,
     [clips, activeClipId],
   );
-
-  const allGames = useMemo(() => {
-    const set = new Set<string>();
-    for (const c of clips) set.add(c.game);
-    return Array.from(set).sort((a, b) => a.localeCompare(b));
-  }, [clips]);
 
   const handleStartRecorder = async () => {
     setBusyAction('start');
@@ -287,6 +290,7 @@ export function App() {
     endSecs: number | null,
     mutedTracks: boolean[],
     trackVolumes: number[],
+    crop?: CropRect,
   ) => {
     setBusyAction('export916');
     try {
@@ -297,10 +301,11 @@ export function App() {
         endSecs,
         mutedTracks,
         trackVolumes,
+        crop,
       );
       await refreshClips();
       setActiveClipId(created.id);
-      pushToast('success', `Exported 9:16 vertical clip "${created.title}"`);
+      pushToast('success', `Exported ${crop ? 'cropped' : '9:16 vertical'} clip "${created.title}"`);
     } catch (e) {
       pushToast('error', String(e));
     } finally {
@@ -340,6 +345,7 @@ export function App() {
 
       {activeClip ? (
         <EditorView
+          theme={theme.resolved}
           clip={activeClip}
           busyAction={busyAction}
           onBack={() => setActiveClipId(null)}
@@ -376,6 +382,8 @@ export function App() {
 
       {settingsOpen && config && (
         <SettingsModal
+          themePreference={theme.preference}
+          onThemeChange={theme.changePreference}
           config={config}
           busy={busyAction === 'settings'}
           onClose={() => setSettingsOpen(false)}

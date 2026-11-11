@@ -132,6 +132,8 @@ pub fn trim_clip(
 
 pub struct VerticalExportOpts<'a> {
     pub blur_bg: bool,
+    /// Normalized [left, top, width, height]; None keeps the 9:16 presets.
+    pub crop: Option<[f64; 4]>,
     pub start_secs: Option<f64>,
     pub end_secs: Option<f64>,
     pub audio_tracks: u32,
@@ -151,10 +153,15 @@ pub fn export_vertical_9_16(
         std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
     }
 
-    let video_filter = if opts.blur_bg {
-        "[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bgb];[fg]scale=1080:-2[fgs];[bgb][fgs]overlay=(W-w)/2:(H-h)/2[vout]"
+    let video_filter = if let Some([x, y, w, h]) = opts.crop {
+        if ![x, y, w, h].iter().all(|v| v.is_finite()) || x < 0.0 || y < 0.0 || w <= 0.0 || h <= 0.0 || x + w > 1.000001 || y + h > 1.000001 {
+            return Err("Crop must be a finite rectangle inside the source video".into());
+        }
+        format!("[0:v]crop=w='max(2,trunc(iw*{w:.8}/2)*2)':h='max(2,trunc(ih*{h:.8}/2)*2)':x='trunc(iw*{x:.8}/2)*2':y='trunc(ih*{y:.8}/2)*2',setsar=1[vout]")
+    } else if opts.blur_bg {
+        "[0:v]split=2[bg][fg];[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,boxblur=25:5[bgb];[fg]scale=1080:-2[fgs];[bgb][fgs]overlay=(W-w)/2:(H-h)/2[vout]".to_string()
     } else {
-        "[0:v]scale=-2:1920:force_original_aspect_ratio=increase,crop=1080:1920[vout]"
+        "[0:v]scale=-2:1920:force_original_aspect_ratio=increase,crop=1080:1920[vout]".to_string()
     };
 
     let active_tracks: Vec<(usize, f64)> = (0..opts.audio_tracks as usize)
@@ -423,6 +430,26 @@ mod tests {
     }
 
     #[test]
+    fn custom_crop_exports_selected_dimensions_and_rejects_invalid_bounds() {
+        let ff = test_ffmpeg();
+        let dir = std::env::temp_dir().join(format!("encore_crop_test_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("source.mp4");
+        let dst = dir.join("crop.mp4");
+        make_clip(&ff, &src, 640, 360, 1);
+        let mut opts = VerticalExportOpts { crop: Some([0.25, 0.0, 0.5, 1.0]), blur_bg: false, start_secs: Some(0.0), end_secs: Some(0.5), audio_tracks: 3, muted_tracks: &[false, true, true], track_volumes: &[0.5, 1.0, 1.0] };
+        export_vertical_9_16(&ff, &src, &dst, &opts).unwrap();
+        let probe = Command::new(&ff).args(["-i", dst.to_str().unwrap(), "-f", "null", "-"]).output().unwrap();
+        let info = String::from_utf8_lossy(&probe.stderr);
+        assert!(probe.status.success() && info.contains("320x360"), "{info}");
+        for invalid in [[0.9, 0.0, 0.5, 1.0], [0.0, 0.0, -0.5, 1.0], [f64::NAN, 0.0, 0.5, 1.0]] {
+            opts.crop = Some(invalid);
+            assert!(export_vertical_9_16(&ff, &src, &dir.join("invalid.mp4"), &opts).is_err());
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
     fn trim_vertical_9_16_and_montage_produce_valid_mp4s() {
         let ff = test_ffmpeg();
         let dir = std::env::temp_dir().join(format!("encore_editor_test_{}", std::process::id()));
@@ -462,6 +489,7 @@ mod tests {
             &src1,
             &vert,
             &VerticalExportOpts {
+                crop: None,
                 blur_bg: true,
                 start_secs: Some(0.0),
                 end_secs: Some(1.5),
@@ -486,6 +514,7 @@ mod tests {
             &src1,
             &vert_single,
             &VerticalExportOpts {
+                crop: None,
                 blur_bg: false,
                 start_secs: Some(0.0),
                 end_secs: Some(1.0),
@@ -505,6 +534,7 @@ mod tests {
             &src1,
             &vert_silent,
             &VerticalExportOpts {
+                crop: None,
                 blur_bg: false,
                 start_secs: Some(0.0),
                 end_secs: Some(1.0),

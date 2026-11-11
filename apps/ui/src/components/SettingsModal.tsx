@@ -1,9 +1,22 @@
 import { useEffect, useState } from 'react';
-import { FolderOpen, Keyboard, Plus, Volume2, X } from 'lucide-react';
+import {
+  FolderOpen,
+  Keyboard,
+  Monitor,
+  Moon,
+  Plus,
+  Sun,
+  Volume2,
+  X,
+} from 'lucide-react';
 import { listAudioDevices, pickClipsFolder } from '../api';
 import type { AudioDeviceInfo, CaptureMode, Config } from '../types';
+import { Modal } from './Modal';
+import type { ThemePreference } from '../theme';
 
 interface SettingsModalProps {
+  themePreference: ThemePreference;
+  onThemeChange: (preference: ThemePreference) => void;
   config: Config;
   busy: boolean;
   onClose: () => void;
@@ -95,7 +108,16 @@ function mapCodeToHotkeyToken(e: KeyboardEvent): string | null {
 }
 
 function formatKeyCombo(e: KeyboardEvent): string | null {
-  const ignoreKeys = ['Control', 'Alt', 'Shift', 'Meta', 'OS', 'CapsLock', 'NumLock', 'ScrollLock'];
+  const ignoreKeys = [
+    'Control',
+    'Alt',
+    'Shift',
+    'Meta',
+    'OS',
+    'CapsLock',
+    'NumLock',
+    'ScrollLock',
+  ];
   const ignoreCodes = [
     'ControlLeft',
     'ControlRight',
@@ -124,15 +146,27 @@ function formatKeyCombo(e: KeyboardEvent): string | null {
   return parts.join('+');
 }
 
-export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalProps) {
-  const [draft, setDraft] = useState<Config>({ ...config, games: [...config.games] });
+export function SettingsModal({
+  themePreference,
+  onThemeChange,
+  config,
+  busy,
+  onClose,
+  onSave,
+}: SettingsModalProps) {
+  const [draft, setDraft] = useState<Config>({
+    ...config,
+    games: [...config.games],
+  });
   const [devices, setDevices] = useState<AudioDeviceInfo[]>([]);
   const [recordingKey, setRecordingKey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
   const [newGame, setNewGame] = useState('');
 
   useEffect(() => {
-    listAudioDevices().then(setDevices).catch(() => setDevices([]));
+    listAudioDevices()
+      .then(setDevices)
+      .catch(() => setDevices([]));
   }, []);
 
   useEffect(() => {
@@ -155,7 +189,10 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
         'MetaLeft',
         'MetaRight',
       ];
-      if (ignoreCodes.includes(e.code) || ['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)) {
+      if (
+        ignoreCodes.includes(e.code) ||
+        ['Control', 'Alt', 'Shift', 'Meta', 'OS'].includes(e.key)
+      ) {
         return;
       }
       const combo = formatKeyCombo(e);
@@ -164,7 +201,9 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
         setHotkeyError(null);
         setRecordingKey(false);
       } else {
-        setHotkeyError('Unsupported key — try A-Z, 0-9, F1-F12, or standard punctuation keys.');
+        setHotkeyError(
+          'Unsupported key — try A-Z, 0-9, F1-F12, or standard punctuation keys.',
+        );
       }
     };
     window.addEventListener('keydown', onKeyDown, true);
@@ -184,59 +223,113 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
   const addGame = () => {
     const trimmed = newGame.trim();
     if (!trimmed) return;
-    const normalized = trimmed.toLowerCase().endsWith('.exe') ? trimmed : `${trimmed}.exe`;
-    if (!draft.games.some((g) => g.toLowerCase() === normalized.toLowerCase())) {
+    const normalized = trimmed.toLowerCase().endsWith('.exe')
+      ? trimmed
+      : `${trimmed}.exe`;
+    if (
+      !draft.games.some((g) => g.toLowerCase() === normalized.toLowerCase())
+    ) {
       setDraft((d) => ({ ...d, games: [...d.games, normalized] }));
     }
     setNewGame('');
   };
 
   return (
-    <div className="modal-backdrop" onClick={onClose}>
-      <div
-        className="modal-card"
-        style={{ maxWidth: 740 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className="modal-header">
-          <div className="modal-title-group">
-            <span className="rack-screw" aria-hidden="true" />
-            <h2>Encore Settings</h2>
-          </div>
-          <div className="modal-title-group">
-            <button className="btn-icon" onClick={onClose} disabled={busy}>
-              <X size={15} />
-            </button>
-            <span className="rack-screw" aria-hidden="true" />
+    <Modal titleId="settings-title" busy={busy} onClose={onClose} wide>
+      <div className="modal-header">
+        <div className="modal-title-group">
+          <div>
+            <h2 id="settings-title">Make it your setup.</h2>
+            <p className="modal-subtitle">
+              Capture, audio and the way you save.
+            </p>
           </div>
         </div>
+        <div className="modal-title-group">
+          <button
+            className="btn-icon"
+            onClick={onClose}
+            disabled={busy}
+            aria-label="Close settings"
+          >
+            <X size={15} />
+          </button>
+        </div>
+      </div>
 
-        <div className="modal-body">
+      <div className="modal-body">
+        <fieldset className="modal-fields" disabled={busy}>
+          <section className="settings-section appearance-section">
+            <h3>Appearance</h3>
+            <fieldset className="theme-picker">
+              <legend>Theme</legend>
+              <div className="theme-options">
+                {(
+                  [
+                    { value: 'system', label: 'System', icon: Monitor },
+                    { value: 'light', label: 'Light', icon: Sun },
+                    { value: 'dark', label: 'Dark', icon: Moon },
+                  ] as const
+                ).map(({ value, label, icon: Icon }) => (
+                  <label
+                    className={`theme-option ${themePreference === value ? 'selected' : ''}`}
+                    key={value}
+                  >
+                    <input
+                      type="radio"
+                      name="theme"
+                      value={value}
+                      checked={themePreference === value}
+                      onChange={() => onThemeChange(value)}
+                    />
+                    <Icon size={17} aria-hidden="true" />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <p className="appearance-help">
+              System follows your Windows appearance. Theme changes apply
+              immediately.
+            </p>
+          </section>
           <div className="settings-grid">
             <section className="settings-section">
-              <h3>Video Capture</h3>
+              <h3>Video capture</h3>
               <div className="field-group">
-                <label>Capture Mode</label>
+                <label htmlFor="capture-mode">Capture mode</label>
                 <div className="field-row">
                   <select
+                    id="capture-mode"
                     value={draft.mode}
                     onChange={(e) =>
-                      setDraft((d) => ({ ...d, mode: e.target.value as CaptureMode }))
+                      setDraft((d) => ({
+                        ...d,
+                        mode: e.target.value as CaptureMode,
+                      }))
                     }
                   >
-                    <option value="GameDetection">Game Detection (Recommended)</option>
-                    <option value="ActiveWindow">Active Window / Display</option>
+                    <option value="GameDetection">
+                      Game Detection (Recommended)
+                    </option>
+                    <option value="ActiveWindow">
+                      Active Window / Display
+                    </option>
                   </select>
                 </div>
               </div>
 
               <div className="field-group">
-                <label>Output Resolution</label>
+                <label htmlFor="capture-resolution">Output resolution</label>
                 <div className="field-row">
                   <select
+                    id="capture-resolution"
                     value={draft.height}
                     onChange={(e) =>
-                      setDraft((d) => ({ ...d, height: Number(e.target.value) }))
+                      setDraft((d) => ({
+                        ...d,
+                        height: Number(e.target.value),
+                      }))
                     }
                   >
                     {HEIGHT_OPTIONS.map((opt) => (
@@ -249,9 +342,10 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
               </div>
 
               <div className="field-group">
-                <label>Frame Rate</label>
+                <label htmlFor="capture-fps">Frame rate</label>
                 <div className="field-row">
                   <select
+                    id="capture-fps"
                     value={draft.fps}
                     onChange={(e) =>
                       setDraft((d) => ({ ...d, fps: Number(e.target.value) }))
@@ -268,15 +362,23 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
             </section>
 
             <section className="settings-section">
-              <h3>Clip Buffer &amp; Hotkey</h3>
+              <h3>Replay buffer &amp; shortcut</h3>
               <div className="field-group">
-                <label>Instant Replay Length ({draft.buffer_secs} seconds)</label>
+                <label htmlFor="capture-buffer">
+                  Replay length ({draft.buffer_secs} seconds)
+                </label>
                 <div className="field-row">
                   <select
-                    value={PRESET_BUFFER_SECS.includes(draft.buffer_secs) ? draft.buffer_secs : 'custom'}
+                    id="capture-buffer"
+                    value={
+                      PRESET_BUFFER_SECS.includes(draft.buffer_secs)
+                        ? draft.buffer_secs
+                        : 'custom'
+                    }
                     onChange={(e) => {
                       const v = Number(e.target.value);
-                      if (!Number.isNaN(v)) setDraft((d) => ({ ...d, buffer_secs: v }));
+                      if (!Number.isNaN(v))
+                        setDraft((d) => ({ ...d, buffer_secs: v }));
                     }}
                   >
                     {PRESET_BUFFER_SECS.map((s) => (
@@ -285,32 +387,49 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
                       </option>
                     ))}
                     {!PRESET_BUFFER_SECS.includes(draft.buffer_secs) && (
-                      <option value="custom">Custom ({draft.buffer_secs}s)</option>
+                      <option value="custom">
+                        Custom ({draft.buffer_secs}s)
+                      </option>
                     )}
                   </select>
                 </div>
               </div>
 
               <div className="field-group">
-                <label>Global Save Clip Hotkey</label>
+                <label htmlFor="capture-hotkey">Save shortcut</label>
                 <button
                   type="button"
+                  id="capture-hotkey"
                   className={`hotkey-recorder mono ${recordingKey ? 'listening' : ''}`}
                   onClick={() => {
                     setHotkeyError(null);
                     setRecordingKey(true);
                   }}
                 >
-                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}>
+                  <span
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 7,
+                    }}
+                  >
                     <Keyboard size={14} />
-                    {recordingKey ? 'Press key combination... (Esc cancels)' : draft.hotkey}
+                    {recordingKey
+                      ? 'Press key combination... (Esc cancels)'
+                      : draft.hotkey}
                   </span>
                   <span style={{ fontSize: 11, color: 'var(--ink-engraved)' }}>
                     {recordingKey ? 'Listening' : 'Change'}
                   </span>
                 </button>
                 {hotkeyError && (
-                  <div style={{ fontSize: 11, color: 'var(--danger, #f87171)', marginTop: 4 }}>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: 'var(--danger, #f87171)',
+                      marginTop: 4,
+                    }}
+                  >
                     {hotkeyError}
                   </div>
                 )}
@@ -318,7 +437,9 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
 
               <div className="toggle-row" style={{ marginTop: 4 }}>
                 <div>
-                  <div style={{ fontWeight: 600 }}>Start Recorder with Windows</div>
+                  <div style={{ fontWeight: 600 }}>
+                    Start Recorder with Windows
+                  </div>
                   <div style={{ fontSize: 11, color: 'var(--ink-engraved)' }}>
                     Runs quietly in system tray on login
                   </div>
@@ -327,9 +448,13 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
                   type="button"
                   className={`switch-btn ${draft.start_with_windows ? 'on' : ''}`}
                   onClick={() =>
-                    setDraft((d) => ({ ...d, start_with_windows: !d.start_with_windows }))
+                    setDraft((d) => ({
+                      ...d,
+                      start_with_windows: !d.start_with_windows,
+                    }))
                   }
                   aria-pressed={draft.start_with_windows}
+                  aria-label="Start recorder with Windows"
                 >
                   <span className="switch-thumb" />
                 </button>
@@ -340,15 +465,19 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
           <section className="settings-section">
             <h3 style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
               <Volume2 size={13} />
-              Multi-Track Audio Routing
+              Separate audio tracks
             </h3>
-            <div className="settings-grid" style={{ gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
+            <div className="settings-grid audio-routing">
               <div className="field-group">
-                <label style={{ color: '#16C9B3' }}>Track 1 · Game Audio</label>
+                <label htmlFor="game-audio">Game audio</label>
                 <select
+                  id="game-audio"
                   value={draft.audio_device ?? ''}
                   onChange={(e) =>
-                    setDraft((d) => ({ ...d, audio_device: e.target.value || null }))
+                    setDraft((d) => ({
+                      ...d,
+                      audio_device: e.target.value || null,
+                    }))
                   }
                 >
                   <option value="">Default Playback Device</option>
@@ -363,11 +492,15 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
               </div>
 
               <div className="field-group">
-                <label style={{ color: '#3B82F6' }}>Track 2 · Chat Audio</label>
+                <label htmlFor="chat-audio">Chat audio</label>
                 <select
+                  id="chat-audio"
                   value={draft.chat_device ?? 'off'}
                   onChange={(e) =>
-                    setDraft((d) => ({ ...d, chat_device: e.target.value || 'off' }))
+                    setDraft((d) => ({
+                      ...d,
+                      chat_device: e.target.value || 'off',
+                    }))
                   }
                 >
                   <option value="off">Off (Disabled)</option>
@@ -382,11 +515,15 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
               </div>
 
               <div className="field-group">
-                <label style={{ color: '#F59E0B' }}>Track 3 · Microphone</label>
+                <label htmlFor="mic-audio">Microphone</label>
                 <select
+                  id="mic-audio"
                   value={draft.mic_device ?? 'off'}
                   onChange={(e) =>
-                    setDraft((d) => ({ ...d, mic_device: e.target.value || 'off' }))
+                    setDraft((d) => ({
+                      ...d,
+                      mic_device: e.target.value || 'off',
+                    }))
                   }
                 >
                   <option value="off">Off (Disabled)</option>
@@ -403,13 +540,18 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
           </section>
 
           <section className="settings-section">
-            <h3>Clips Storage Folder</h3>
+            <h3>
+              <label htmlFor="clips-folder">Clips folder</label>
+            </h3>
             <div className="field-row">
               <input
                 type="text"
+                id="clips-folder"
                 className="mono"
                 value={draft.clips_dir}
-                onChange={(e) => setDraft((d) => ({ ...d, clips_dir: e.target.value }))}
+                onChange={(e) =>
+                  setDraft((d) => ({ ...d, clips_dir: e.target.value }))
+                }
               />
               <button className="btn-secondary" onClick={handleBrowseFolder}>
                 <FolderOpen size={14} />
@@ -419,7 +561,7 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
           </section>
 
           <section className="settings-section">
-            <h3>Detected Game Executables ({draft.games.length})</h3>
+            <h3>Games to capture ({draft.games.length})</h3>
             <div className="games-chips">
               {draft.games.map((g) => (
                 <span key={g} className="game-chip mono">
@@ -443,6 +585,7 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
               <input
                 type="text"
                 placeholder="Add game executable (e.g. cs2.exe)..."
+                aria-label="Add game executable"
                 value={newGame}
                 onChange={(e) => setNewGame(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && addGame()}
@@ -453,21 +596,21 @@ export function SettingsModal({ config, busy, onClose, onSave }: SettingsModalPr
               </button>
             </div>
           </section>
-        </div>
-
-        <div className="modal-footer">
-          <button className="btn-ghost" onClick={onClose} disabled={busy}>
-            Cancel
-          </button>
-          <button
-            className="btn-primary"
-            disabled={busy}
-            onClick={() => onSave(draft)}
-          >
-            {busy ? 'Applying...' : 'Save & Apply Live'}
-          </button>
-        </div>
+        </fieldset>
       </div>
-    </div>
+
+      <div className="modal-footer">
+        <button className="btn-ghost" onClick={onClose} disabled={busy}>
+          Cancel
+        </button>
+        <button
+          className="btn-primary"
+          disabled={busy}
+          onClick={() => onSave(draft)}
+        >
+          {busy ? 'Applying…' : 'Save settings'}
+        </button>
+      </div>
+    </Modal>
   );
 }

@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:installer": "node scripts/build-installer.mjs",
     "preview": "vite preview",
+    "pretest:ui": "npm run build",
+    "test:ui": "playwright test",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -16,6 +19,7 @@
     "react-dom": "^19.3.1"
   },
   "devDependencies": {
+    "@playwright/test": "^1.65.0",
     "@tauri-apps/cli": "^2.12.4",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

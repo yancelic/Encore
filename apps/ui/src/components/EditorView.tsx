@@ -31,8 +31,11 @@ import {
   mediaUrl,
 } from '../api';
 import type { ClipRecord } from '../types';
+import type { ResolvedTheme } from '../theme';
+import { CropControls, CropOverlay, DEFAULT_CROP, type CropRect } from './CropControls';
 
 interface EditorViewProps {
+  theme: ResolvedTheme;
   clip: ClipRecord;
   busyAction: string | null;
   onBack: () => void;
@@ -51,6 +54,7 @@ interface EditorViewProps {
     endSecs: number | null,
     mutedTracks: boolean[],
     trackVolumes: number[],
+    crop?: CropRect,
   ) => Promise<void>;
   onCopyClip: (path: string) => Promise<void>;
   onRevealClip: (path: string) => Promise<void>;
@@ -58,12 +62,13 @@ interface EditorViewProps {
 }
 
 const TRACK_META = [
-  { label: 'Game Audio', color: '#16C9B3', icon: Gamepad2 },
-  { label: 'Chat Audio', color: '#3B82F6', icon: Users },
-  { label: 'Microphone', color: '#F59E0B', icon: Mic },
+  { label: 'Game audio', color: 'var(--game-track)', icon: Gamepad2 },
+  { label: 'Chat audio', color: 'var(--chat-track)', icon: Users },
+  { label: 'Microphone', color: 'var(--mic-track)', icon: Mic },
 ] as const;
 
 interface WaveformCanvasProps {
+  theme: ResolvedTheme;
   peaks: number[];
   color: string;
   muted: boolean;
@@ -73,6 +78,7 @@ interface WaveformCanvasProps {
 }
 
 function WaveformCanvas({
+  theme,
   peaks,
   color,
   muted,
@@ -109,8 +115,9 @@ function WaveformCanvas({
     ctx.clearRect(0, 0, size.w, size.h);
 
     const cy = size.h / 2;
-    // Recessed instrument trough subtle grid lines & center baseline
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+    const palette = getComputedStyle(canvas);
+    const trackColor = palette.getPropertyValue(color.slice(4, -1)).trim();
+    ctx.strokeStyle = palette.getPropertyValue('--waveform-grid').trim();
     ctx.lineWidth = 1;
     for (let gx = 40; gx < size.w; gx += 40) {
       ctx.beginPath();
@@ -118,7 +125,7 @@ function WaveformCanvas({
       ctx.lineTo(gx, size.h);
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(160, 170, 191, 0.18)';
+    ctx.strokeStyle = palette.getPropertyValue('--waveform-line').trim();
     ctx.beginPath();
     ctx.moveTo(0, cy);
     ctx.lineTo(size.w, cy);
@@ -130,16 +137,7 @@ function WaveformCanvas({
     const maxAmp = (size.h - 6) * 0.48;
 
     const effectiveMuted = muted || volume <= 0.001;
-    const grad = ctx.createLinearGradient(0, 2, 0, size.h - 2);
-    if (effectiveMuted) {
-      grad.addColorStop(0, 'rgba(130, 140, 160, 0.24)');
-      grad.addColorStop(0.5, 'rgba(130, 140, 160, 0.34)');
-      grad.addColorStop(1, 'rgba(130, 140, 160, 0.24)');
-    } else {
-      grad.addColorStop(0, color);
-      grad.addColorStop(0.5, '#F4F8FF');
-      grad.addColorStop(1, color);
-    }
+    const fill = effectiveMuted ? palette.getPropertyValue('--ink-dim').trim() : trackColor;
 
     for (let i = 0; i < data.length; i++) {
       const ratio = (i + 0.5) / data.length;
@@ -149,16 +147,17 @@ function WaveformCanvas({
       const x = i * step + (step - barW) * 0.5;
 
       ctx.globalAlpha = effectiveMuted ? 0.55 : inTrim ? 0.92 : 0.22;
-      ctx.fillStyle = grad;
+      ctx.fillStyle = fill;
       ctx.fillRect(x, cy - amp, barW, amp * 2);
     }
     ctx.globalAlpha = 1;
-  }, [peaks, color, muted, volume, trimStartRatio, trimEndRatio, size]);
+  }, [peaks, color, muted, volume, trimStartRatio, trimEndRatio, size, theme]);
 
   return <canvas ref={canvasRef} className="waveform-canvas" />;
 }
 
 export function EditorView({
+  theme,
   clip,
   busyAction,
   onBack,
@@ -186,7 +185,8 @@ export function EditorView({
   const [waveforms, setWaveforms] = useState<number[][]>([]);
   const [trackAudioUrls, setTrackAudioUrls] = useState<string[]>([]);
 
-  const [canvasMode, setCanvasMode] = useState<'original' | '9:16'>('original');
+  const [canvasMode, setCanvasMode] = useState<'original' | '9:16' | 'custom'>('original');
+  const [crop, setCrop] = useState<CropRect>(DEFAULT_CROP);
   const [blurBg, setBlurBg] = useState<boolean>(true);
   const [title, setTitle] = useState<string>(clip.title);
   const [tag, setTag] = useState<string>(clip.tag);
@@ -211,6 +211,8 @@ export function EditorView({
     setDescription(clip.description);
     setDetailsSaved(false);
     setConfirmDelete(false);
+    setCrop(DEFAULT_CROP);
+    setCanvasMode('original');
     setWaveforms([]);
     setTrackAudioUrls([]);
 
@@ -325,6 +327,7 @@ export function EditorView({
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const el = e.target as HTMLElement | null;
+      if (el?.closest('dialog') || document.querySelector('dialog[open]')) return;
       const isRange = el instanceof HTMLInputElement && el.type === 'range';
       if (
         el &&
@@ -507,7 +510,7 @@ export function EditorView({
         <div className="editor-meta-left">
           <button className="btn-ghost" onClick={onBack}>
             <ArrowLeft size={15} />
-            All Clips
+            All replays
           </button>
           <span className="editor-divider" aria-hidden="true" />
           <span style={{ fontWeight: 700 }}>{clip.game}</span>
@@ -586,11 +589,12 @@ export function EditorView({
                   </div>
                 </div>
               )}
+              {canvasMode === 'custom' && <CropOverlay crop={crop} onChange={setCrop} aspect={clip.width / Math.max(1, clip.height)} />}
             </div>
             <div className="monitor-chin mono">
               <span className="monitor-tally">
                 <span className={`monitor-tally-led ${playing ? 'playing' : ''}`} />
-                Encore Master Monitor
+                {clip.title}
               </span>
               <span>
                 {clip.width}×{clip.height} · {Math.round(clip.fps)} FPS
@@ -601,21 +605,28 @@ export function EditorView({
 
         <aside className="inspector-pane">
           <div className="inspector-section">
-            <span className="inspector-label">Canvas Size</span>
+            <span className="inspector-label">Export format</span>
             <div className="canvas-toggle">
               <button
                 className={`canvas-btn ${canvasMode === 'original' ? 'active' : ''}`}
+                aria-pressed={canvasMode === 'original'}
                 onClick={() => setCanvasMode('original')}
               >
-                Original (16:9)
+                Original
               </button>
               <button
                 className={`canvas-btn ${canvasMode === '9:16' ? 'active' : ''}`}
+                aria-pressed={canvasMode === '9:16'}
                 onClick={() => setCanvasMode('9:16')}
               >
-                9:16 Vertical
+                9:16 vertical
               </button>
+              <button className={`canvas-btn ${canvasMode === 'custom' ? 'active' : ''}`} aria-pressed={canvasMode === 'custom'} onClick={() => setCanvasMode('custom')}>Custom</button>
             </div>
+            {canvasMode === 'custom' && <>
+              <CropControls crop={crop} onChange={setCrop} width={clip.width} height={clip.height} />
+              <button className="btn-primary" disabled={busyAction === 'export916'} onClick={() => onExportVertical(clip.id, false, trimStart, trimEnd, mutedTracks.slice(0, trackCount), trackVolumes.slice(0, trackCount), crop)}><Download size={14} />{busyAction === 'export916' ? 'Exporting…' : 'Export cropped MP4'}</button>
+            </>}
 
             {canvasMode === '9:16' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
@@ -657,11 +668,11 @@ export function EditorView({
           </div>
 
           <div className="inspector-section">
-            <span className="inspector-label">Clip Details</span>
+            <span className="inspector-label">Clip details</span>
             <div className="field-group">
-              <label>Title</label>
+              <label htmlFor="clip-title">Title</label>
               <input
-                type="text"
+                type="text" id="clip-title"
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
                 onBlur={handleSaveDetails}
@@ -669,10 +680,10 @@ export function EditorView({
             </div>
 
             <div className="field-group">
-              <label>Tag</label>
+              <label htmlFor="clip-tag">Tag</label>
               <input
                 type="text"
-                placeholder="e.g. Clutch, Ace, Flick"
+                id="clip-tag" placeholder="e.g. Clutch, Ace, Flick"
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
                 onBlur={handleSaveDetails}
@@ -680,9 +691,9 @@ export function EditorView({
             </div>
 
             <div className="field-group">
-              <label>Notes</label>
+              <label htmlFor="clip-notes">Notes</label>
               <textarea
-                rows={2}
+                rows={2} id="clip-notes"
                 placeholder="Add description or timestamp notes..."
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
@@ -691,13 +702,13 @@ export function EditorView({
             </div>
 
             <button className="btn-secondary" onClick={handleSaveDetails}>
-              {detailsSaved ? <Check size={14} color="#16C9B3" /> : <Sparkles size={14} />}
+              {detailsSaved ? <Check size={14} /> : <Sparkles size={14} />}
               {detailsSaved ? 'Saved Details' : 'Save Details'}
             </button>
           </div>
 
           <div className="inspector-section" style={{ marginTop: 'auto' }}>
-            <span className="inspector-label">File Actions</span>
+            <span className="inspector-label">Clip file</span>
             <button className="btn-secondary" onClick={() => onRevealClip(clip.path)}>
               <FolderOpen size={14} />
               Show in Explorer
@@ -828,7 +839,7 @@ export function EditorView({
         </div>
 
         <div className="tracks-board">
-          {/* Engraved Metallic Timeline Ruler */}
+          {/* Ruler and lanes share one horizontal coordinate system. */}
           <div className="timeline-ruler-row">
             <div className="timeline-ruler-spacer">Timeline</div>
             <div className="timeline-ruler" onPointerDown={startScrub} title="Click or drag to scrub">
@@ -852,7 +863,7 @@ export function EditorView({
           <div className="track-row video-lane">
             <div className="track-label-col">
               <span className="track-name">
-                <span className="track-swatch" style={{ background: '#16C9B3', color: '#16C9B3' }} />
+                <span className="track-swatch" style={{ background: 'var(--game-track)' }} />
                 Video ({Math.round(clip.fps)}fps)
               </span>
               <span className="mono" style={{ fontSize: 10, color: 'var(--ink-engraved)' }}>
@@ -910,7 +921,7 @@ export function EditorView({
             const volPct = Math.round(trackVol * 100);
             const isEffectivelyMuted = isMuted || trackVol <= 0.001;
             const sliderStyle = {
-              '--track-color': isEffectivelyMuted ? '#64748B' : meta.color,
+              '--track-color': isEffectivelyMuted ? 'var(--ink-dim)' : meta.color,
               '--volume-pct': `${volPct}%`,
             } as React.CSSProperties;
 
@@ -968,6 +979,7 @@ export function EditorView({
 
                 <div className="track-lane" onPointerDown={startScrub}>
                   <WaveformCanvas
+                    theme={theme}
                     peaks={waveforms[idx] ?? []}
                     color={meta.color}
                     muted={isMuted}
@@ -981,6 +993,7 @@ export function EditorView({
             );
           })}
         </div>
+        <p className="timeline-help">Space to play · I / O to set trim · Arrow keys to step through frames</p>
       </section>
     </div>
   );
