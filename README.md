@@ -38,6 +38,15 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 
 ### Build Commands
 
+The standard Windows distribution is an NSIS setup executable. With dependencies installed and `tools/ffmpeg.exe` present, build the recorder, UI, and installer together:
+
+```powershell
+npm --prefix apps/ui ci
+npm --prefix apps/ui run build:installer
+```
+
+To run those build steps individually:
+
 ```powershell
 # 1. Build the headless recorder (bundled by Tauri)
 cargo build --release --bin encore-recorder
@@ -54,6 +63,12 @@ The NSIS installer is written to:
 ```text
 target/release/bundle/nsis/Encore_0.2.0_x64-setup.exe
 ```
+
+Building creates the local installer; publishing a GitHub release is a separate step.
+
+### Appearance
+
+Settings → Appearance offers **System**, **Light**, and **Dark**. System is the default and follows changes to Windows appearance while Encore is open. A manual choice is remembered on this computer and applies throughout the library, editor, timeline, and dialogs. Theme changes take effect immediately, independently of capture settings.
 
 ### Tests
 

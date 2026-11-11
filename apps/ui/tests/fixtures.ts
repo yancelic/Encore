@@ -46,6 +46,7 @@ declare global {
   interface Window {
     __uiCalls: { command: string; args: Record<string, any> }[];
     __TAURI_INTERNALS__: {
+      metadata: { currentWindow: { label: string } };
       convertFileSrc: (path: string) => string;
       invoke: (command: string, args?: Record<string, any>) => Promise<any>;
     };
@@ -95,10 +96,14 @@ export async function mockDesktop(
           };
       window.__uiCalls = [];
       window.__TAURI_INTERNALS__ = {
+        metadata: { currentWindow: { label: 'main' } },
         convertFileSrc: (path) => path,
         invoke: async (command, args = {}) => {
           window.__uiCalls.push({ command, args });
           switch (command) {
+            case 'plugin:window|set_theme':
+            case 'plugin:window|set_background_color':
+              return;
             case 'get_config':
               return cfg;
             case 'get_recorder_status':

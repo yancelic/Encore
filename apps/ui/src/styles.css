@@ -48,12 +48,82 @@
   --ink-dim: #687981;
   --primary: var(--brick-ember);
   --primary-lit: #e43140;
+  --accent: var(--primary);
   --danger: var(--brick-ember);
-  --game-track: var(--pale-sky);
-  --chat-track: #ecebf3;
-  --mic-track: #8da6b5;
+  --surface: var(--ghost-white);
+  --surface-muted: #dfe2e8;
+  --surface-selected: #dce1e7;
+  --surface-hover: #e2e4eb;
+  --tag-surface: #dce4eb;
+  --info-surface: #dbe4ec;
+  --timeline-surface: #e3e6ed;
+  --lane-surface: #d4dfe7;
+  --video-lane-surface: #ccd9e3;
+  --video-matte: #f5f4f9;
+  --trim-color: #5d737e;
+  --trim-fill: #5d737e24;
+  --trim-dim: #ecebf3b3;
+  --game-track: #486776;
+  --chat-track: #354957;
+  --mic-track: #66717f;
+  --waveform-grid: #5d737e18;
+  --waveform-line: #5d737e38;
+  --danger-text: #a60011;
+  --danger-soft: #c2011414;
+  --range-track: #b6c2cb;
+  --range-thumb: #536670;
+  --scrollbar: #aebac2;
+  --switch-off: #b6bfc6;
+  --focus: var(--primary);
+  --primary-hover: #a60011;
   --font-sans: Manrope, 'Segoe UI', sans-serif;
   --font-display: 'Barlow Condensed', 'Arial Narrow', sans-serif;
+}
+
+:root[data-theme='dark'] {
+  color-scheme: dark;
+  --surface: #15171b;
+  --paper: #20242b;
+  --line: #353c46;
+  --ink: #ecebf3;
+  --ink-engraved: #b3bfca;
+  --ink-dim: #98a6b4;
+  --surface-muted: #252a32;
+  --surface-selected: #303844;
+  --surface-hover: #2b313b;
+  --tag-surface: #2e3945;
+  --info-surface: #262f3b;
+  --timeline-surface: #1c1f25;
+  --lane-surface: #2a323d;
+  --video-lane-surface: #303b49;
+  --video-matte: #090a0c;
+  --trim-color: #bfd5e2;
+  --trim-fill: #bfd5e22b;
+  --trim-dim: #15171bb3;
+  --game-track: #bfd5e2;
+  --chat-track: #ecebf3;
+  --mic-track: #9aaaba;
+  --waveform-grid: #ffffff09;
+  --waveform-line: #bfd5e230;
+  --danger-text: #ff929c;
+  --danger-soft: #c201142e;
+  --range-track: #495564;
+  --range-thumb: #ecebf3;
+  --scrollbar: #667383;
+  --switch-off: #546171;
+  --focus: #bfd5e2;
+  --accent: #ff6977;
+  --primary-hover: #a60011;
+}
+
+/* Before JavaScript resolves a saved override, use the OS for the empty window. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme]),
+  :root:not([data-theme]) body {
+    background: #15171b;
+    color: #ecebf3;
+    color-scheme: dark;
+  }
 }
 
 * {
@@ -67,7 +137,7 @@ body,
   margin: 0;
 }
 body {
-  background: var(--ghost-white);
+  background: var(--surface);
   color: var(--ink);
   font: 400 13px/1.5 var(--font-sans);
   overflow: hidden;
@@ -105,13 +175,13 @@ button:disabled {
   cursor: not-allowed;
 }
 button:not(:disabled):hover {
-  color: var(--primary);
+  color: var(--accent);
 }
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
 textarea:focus-visible {
-  outline: 2px solid var(--primary);
+  outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 input,
@@ -175,8 +245,8 @@ kbd {
   background: transparent;
 }
 ::-webkit-scrollbar-thumb {
-  background: #aebac2;
-  border: 2px solid var(--ghost-white);
+  background: var(--scrollbar);
+  border: 2px solid var(--surface);
   border-radius: 8px;
 }
 .app-shell {
@@ -202,8 +272,8 @@ kbd {
 }
 .btn-primary:not(:disabled):hover {
   color: #fff;
-  background: #a60011;
-  border-color: #a60011;
+  background: var(--primary-hover);
+  border-color: var(--primary-hover);
 }
 .btn-secondary {
   border-color: var(--line);
@@ -220,7 +290,7 @@ kbd {
   background: var(--paper);
 }
 .btn-danger {
-  color: var(--danger);
+  color: var(--danger-text);
   border-color: color-mix(in srgb, var(--danger) 28%, transparent);
 }
 .btn-danger:not(:disabled):hover {
@@ -245,7 +315,7 @@ kbd {
   align-items: center;
   gap: 2px;
   padding: 3px;
-  background: #dfe2e8;
+  background: var(--surface-muted);
   border-radius: 5px;
 }
 .mode-switch button {
@@ -386,14 +456,14 @@ kbd {
   text-align: left;
 }
 .nav-item.active {
-  background: #dce1e7;
+  background: var(--surface-selected);
   color: var(--ink);
 }
 .nav-item.active svg {
-  color: var(--primary);
+  color: var(--accent);
 }
 .nav-item:not(:disabled):hover {
-  background: #e2e4eb;
+  background: var(--surface-hover);
 }
 .sidebar-games {
   overflow-y: auto;
@@ -673,7 +743,7 @@ kbd {
   display: inline-block;
   font-size: 9px;
   color: var(--ink-engraved);
-  background: #dce4eb;
+  background: var(--tag-surface);
   padding: 2px 6px;
   border-radius: 3px;
   max-width: 85px;
@@ -705,7 +775,7 @@ kbd {
   font-size: 10px;
 }
 .btn-chip:not(:disabled):hover {
-  background: #dfe2e8;
+  background: var(--surface-muted);
 }
 .btn-chip.copied {
   color: var(--ink);
@@ -747,7 +817,7 @@ kbd {
   gap: 10px;
   padding: 13px 34px;
   margin-top: 12px;
-  background: #dbe4ec;
+  background: var(--info-surface);
   font-size: 11px;
 }
 .montage-bar > div {
@@ -817,20 +887,14 @@ kbd {
   margin-left: 7px;
 }
 
-/* Editor: a dark, distraction-free version of the same palette. */
+/* All editor surfaces inherit the app's chosen theme. */
 .editor-shell {
-  color-scheme: dark;
-  --ink: var(--ghost-white);
-  --ink-engraved: #adbec8;
-  --ink-dim: #93a5ae;
-  --line: #354249;
-  --paper: #202a2f;
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
   color: var(--ink);
-  background: var(--onyx);
+  background: var(--surface);
 }
 .editor-meta-bar {
   display: flex;
@@ -899,7 +963,7 @@ kbd {
   align-items: center;
   justify-content: center;
   min-height: 0;
-  background: #000;
+  background: var(--video-matte);
   overflow: hidden;
   border-radius: 3px;
 }
@@ -1014,34 +1078,16 @@ kbd {
   border: 1px solid var(--line);
 }
 .canvas-btn.active {
-  border-color: var(--pale-sky);
-  color: var(--ghost-white);
-  background: #26373f;
-}
-.editor-shell .mode-switch {
-  background: #202a2f;
-}
-.editor-shell .btn-danger {
-  color: #ff8993;
-  border-color: #c2011466;
-}
-.editor-shell .btn-danger:hover {
-  color: #fff;
-}
-.editor-shell button:not(:disabled):hover {
-  color: var(--ghost-white);
-}
-.editor-shell button:focus-visible,
-.editor-shell input:focus-visible,
-.editor-shell textarea:focus-visible {
-  outline-color: var(--pale-sky);
+  border-color: var(--ink-engraved);
+  color: var(--ink);
+  background: var(--surface-selected);
 }
 
 /* Timeline dimensions are shared by the ruler and lanes to keep scrubbing aligned. */
 .timeline-deck {
   padding: 14px 24px 20px;
   border-top: 1px solid var(--line);
-  background: #172025;
+  background: var(--timeline-surface);
   flex-shrink: 0;
 }
 .transport-bar {
@@ -1065,13 +1111,13 @@ kbd {
 .play-btn {
   width: 35px;
   height: 35px;
-  border: 1px solid var(--pale-sky);
+  border: 1px solid var(--ink-engraved);
   border-radius: 50%;
-  color: var(--ghost-white);
+  color: var(--ink);
 }
 .play-btn:not(:disabled):hover {
-  color: var(--ghost-white);
-  background: var(--blue-slate);
+  color: var(--ink);
+  background: var(--surface-selected);
 }
 .timecode-lcd {
   font-size: 12px;
@@ -1196,8 +1242,8 @@ kbd {
   color: var(--ink-engraved);
 }
 .mute-toggle.muted {
-  color: #ff8993;
-  background: #c201142e;
+  color: var(--danger-text);
+  background: var(--danger-soft);
 }
 .track-volume-slider {
   appearance: none;
@@ -1213,7 +1259,7 @@ kbd {
   background: linear-gradient(
     to right,
     var(--track-color) var(--volume-pct),
-    #354249 var(--volume-pct)
+    var(--range-track) var(--volume-pct)
   );
   border-radius: 3px;
 }
@@ -1224,7 +1270,7 @@ kbd {
   height: 8px;
   margin-top: -2.5px;
   border-radius: 50%;
-  background: var(--ghost-white);
+  background: var(--range-thumb);
 }
 .track-volume-pct {
   width: 31px;
@@ -1233,7 +1279,7 @@ kbd {
   font-size: 9px;
 }
 .track-volume-pct.muted {
-  color: #ff8993;
+  color: var(--danger-text);
 }
 .track-lane {
   position: relative;
@@ -1241,14 +1287,14 @@ kbd {
   min-width: 0;
   height: 100%;
   border-radius: 3px;
-  background: #25343c;
+  background: var(--lane-surface);
   overflow: hidden;
   cursor: pointer;
   touch-action: none;
 }
 .video-lane .track-lane {
   overflow: visible;
-  background: #26373f;
+  background: var(--video-lane-surface);
 }
 .trim-mask {
   position: absolute;
@@ -1261,9 +1307,9 @@ kbd {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: #bfd5e22b;
-  border-top: 2px solid var(--pale-sky);
-  border-bottom: 2px solid var(--pale-sky);
+  background: var(--trim-fill);
+  border-top: 2px solid var(--trim-color);
+  border-bottom: 2px solid var(--trim-color);
   pointer-events: none;
 }
 .trim-dim-left,
@@ -1271,7 +1317,7 @@ kbd {
   position: absolute;
   top: 0;
   bottom: 0;
-  background: #0c120cb3;
+  background: var(--trim-dim);
   pointer-events: none;
 }
 .trim-handle {
@@ -1281,7 +1327,7 @@ kbd {
   width: 10px;
   margin-left: -5px;
   border-radius: 2px;
-  background: var(--pale-sky);
+  background: var(--trim-color);
   cursor: ew-resize;
   display: flex;
   align-items: center;
@@ -1293,8 +1339,8 @@ kbd {
   content: '';
   width: 2px;
   height: 12px;
-  border-left: 1px solid var(--blue-slate);
-  border-right: 1px solid var(--blue-slate);
+  border-left: 1px solid var(--surface);
+  border-right: 1px solid var(--surface);
 }
 .playhead-line {
   position: absolute;
@@ -1327,7 +1373,7 @@ kbd {
   padding-left: 200px;
 }
 
-/* Dialogs use the light library palette, including above the dark editor. */
+/* Native dialogs live in the top layer and share the same root theme tokens. */
 .modal-backdrop {
   position: fixed;
   inset: 0;
@@ -1356,8 +1402,8 @@ kbd {
 .modal-card {
   display: flex;
   flex-direction: column;
-  background: var(--ghost-white);
-  color: var(--onyx);
+  background: var(--surface);
+  color: var(--ink);
   width: 680px;
   max-width: 100%;
   max-height: 100%;
@@ -1424,6 +1470,59 @@ kbd {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 14px;
 }
+.theme-picker {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.theme-picker legend {
+  color: var(--ink-engraved);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.theme-options {
+  display: flex;
+  gap: 10px;
+}
+.theme-option {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  gap: 9px;
+  padding: 13px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--ink-engraved);
+  font-size: 12px;
+  cursor: pointer;
+}
+.theme-option.selected {
+  border-color: var(--ink-engraved);
+  color: var(--ink);
+  background: var(--surface-selected);
+}
+.theme-option.selected svg {
+  color: var(--accent);
+}
+.theme-option input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  padding: 0;
+  margin: 0;
+}
+.theme-option:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.appearance-help {
+  color: var(--ink-engraved);
+  font-size: 10px;
+}
 .settings-section {
   display: flex;
   flex-direction: column;
@@ -1438,6 +1537,10 @@ kbd {
 .modal-fields > .settings-section {
   border-top: 1px solid var(--line);
   padding-top: 20px;
+}
+.modal-fields > .appearance-section {
+  border-top: 0;
+  padding-top: 0;
 }
 .field-row {
   display: flex;
@@ -1491,7 +1594,7 @@ kbd {
   height: 23px;
   width: 39px;
   border-radius: 20px;
-  background: #b6bfc6;
+  background: var(--switch-off);
   padding: 3px;
   justify-content: flex-start;
 }
@@ -1536,7 +1639,7 @@ kbd {
 }
 .toast {
   padding: 13px 18px;
-  color: var(--onyx);
+  color: var(--ink);
   background: var(--paper);
   border: 1px solid var(--line);
   border-left: 3px solid var(--blue-slate);

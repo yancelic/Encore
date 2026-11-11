@@ -10,11 +10,12 @@ export default defineConfig({
   use: {
     baseURL: 'http://127.0.0.1:1435',
     viewport: { width: 1340, height: 840 },
+    colorScheme: 'light',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',
   },
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 1435',
+    command: 'npm run preview -- --host 127.0.0.1 --port 1435 --strictPort',
     url: 'http://127.0.0.1:1435',
     reuseExistingServer: false,
     timeout: 30_000,

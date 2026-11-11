@@ -21,6 +21,7 @@ import { LibraryView } from './components/LibraryView';
 import { MontageModal } from './components/MontageModal';
 import { SettingsModal } from './components/SettingsModal';
 import { TopBar } from './components/TopBar';
+import { useTheme } from './theme';
 import type {
   CaptureMode,
   ClipRecord,
@@ -31,6 +32,7 @@ import type {
 } from './types';
 
 export function App() {
+  const theme = useTheme();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [clips, setClips] = useState<ClipRecord[]>([]);
@@ -340,6 +342,7 @@ export function App() {
 
       {activeClip ? (
         <EditorView
+          theme={theme.resolved}
           clip={activeClip}
           busyAction={busyAction}
           onBack={() => setActiveClipId(null)}
@@ -376,6 +379,8 @@ export function App() {
 
       {settingsOpen && config && (
         <SettingsModal
+          themePreference={theme.preference}
+          onThemeChange={theme.changePreference}
           config={config}
           busy={busyAction === 'settings'}
           onClose={() => setSettingsOpen(false)}

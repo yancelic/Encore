@@ -1,10 +1,22 @@
 import { useEffect, useState } from 'react';
-import { FolderOpen, Keyboard, Plus, Volume2, X } from 'lucide-react';
+import {
+  FolderOpen,
+  Keyboard,
+  Monitor,
+  Moon,
+  Plus,
+  Sun,
+  Volume2,
+  X,
+} from 'lucide-react';
 import { listAudioDevices, pickClipsFolder } from '../api';
 import type { AudioDeviceInfo, CaptureMode, Config } from '../types';
 import { Modal } from './Modal';
+import type { ThemePreference } from '../theme';
 
 interface SettingsModalProps {
+  themePreference: ThemePreference;
+  onThemeChange: (preference: ThemePreference) => void;
   config: Config;
   busy: boolean;
   onClose: () => void;
@@ -135,6 +147,8 @@ function formatKeyCombo(e: KeyboardEvent): string | null {
 }
 
 export function SettingsModal({
+  themePreference,
+  onThemeChange,
   config,
   busy,
   onClose,
@@ -245,6 +259,40 @@ export function SettingsModal({
 
       <div className="modal-body">
         <fieldset className="modal-fields" disabled={busy}>
+          <section className="settings-section appearance-section">
+            <h3>Appearance</h3>
+            <fieldset className="theme-picker">
+              <legend>Theme</legend>
+              <div className="theme-options">
+                {(
+                  [
+                    { value: 'system', label: 'System', icon: Monitor },
+                    { value: 'light', label: 'Light', icon: Sun },
+                    { value: 'dark', label: 'Dark', icon: Moon },
+                  ] as const
+                ).map(({ value, label, icon: Icon }) => (
+                  <label
+                    className={`theme-option ${themePreference === value ? 'selected' : ''}`}
+                    key={value}
+                  >
+                    <input
+                      type="radio"
+                      name="theme"
+                      value={value}
+                      checked={themePreference === value}
+                      onChange={() => onThemeChange(value)}
+                    />
+                    <Icon size={17} aria-hidden="true" />
+                    <span>{label}</span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <p className="appearance-help">
+              System follows your Windows appearance. Theme changes apply
+              immediately.
+            </p>
+          </section>
           <div className="settings-grid">
             <section className="settings-section">
               <h3>Video capture</h3>

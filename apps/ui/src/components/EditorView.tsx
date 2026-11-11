@@ -31,8 +31,10 @@ import {
   mediaUrl,
 } from '../api';
 import type { ClipRecord } from '../types';
+import type { ResolvedTheme } from '../theme';
 
 interface EditorViewProps {
+  theme: ResolvedTheme;
   clip: ClipRecord;
   busyAction: string | null;
   onBack: () => void;
@@ -58,12 +60,13 @@ interface EditorViewProps {
 }
 
 const TRACK_META = [
-  { label: 'Game audio', color: '#bfd5e2', icon: Gamepad2 },
-  { label: 'Chat audio', color: '#ecebf3', icon: Users },
-  { label: 'Microphone', color: '#8da6b5', icon: Mic },
+  { label: 'Game audio', color: 'var(--game-track)', icon: Gamepad2 },
+  { label: 'Chat audio', color: 'var(--chat-track)', icon: Users },
+  { label: 'Microphone', color: 'var(--mic-track)', icon: Mic },
 ] as const;
 
 interface WaveformCanvasProps {
+  theme: ResolvedTheme;
   peaks: number[];
   color: string;
   muted: boolean;
@@ -73,6 +76,7 @@ interface WaveformCanvasProps {
 }
 
 function WaveformCanvas({
+  theme,
   peaks,
   color,
   muted,
@@ -109,8 +113,9 @@ function WaveformCanvas({
     ctx.clearRect(0, 0, size.w, size.h);
 
     const cy = size.h / 2;
-    // Recessed instrument trough subtle grid lines & center baseline
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+    const palette = getComputedStyle(canvas);
+    const trackColor = palette.getPropertyValue(color.slice(4, -1)).trim();
+    ctx.strokeStyle = palette.getPropertyValue('--waveform-grid').trim();
     ctx.lineWidth = 1;
     for (let gx = 40; gx < size.w; gx += 40) {
       ctx.beginPath();
@@ -118,7 +123,7 @@ function WaveformCanvas({
       ctx.lineTo(gx, size.h);
       ctx.stroke();
     }
-    ctx.strokeStyle = 'rgba(160, 170, 191, 0.18)';
+    ctx.strokeStyle = palette.getPropertyValue('--waveform-line').trim();
     ctx.beginPath();
     ctx.moveTo(0, cy);
     ctx.lineTo(size.w, cy);
@@ -130,16 +135,7 @@ function WaveformCanvas({
     const maxAmp = (size.h - 6) * 0.48;
 
     const effectiveMuted = muted || volume <= 0.001;
-    const grad = ctx.createLinearGradient(0, 2, 0, size.h - 2);
-    if (effectiveMuted) {
-      grad.addColorStop(0, 'rgba(130, 140, 160, 0.24)');
-      grad.addColorStop(0.5, 'rgba(130, 140, 160, 0.34)');
-      grad.addColorStop(1, 'rgba(130, 140, 160, 0.24)');
-    } else {
-      grad.addColorStop(0, color);
-      grad.addColorStop(0.5, '#F4F8FF');
-      grad.addColorStop(1, color);
-    }
+    const fill = effectiveMuted ? palette.getPropertyValue('--ink-dim').trim() : trackColor;
 
     for (let i = 0; i < data.length; i++) {
       const ratio = (i + 0.5) / data.length;
@@ -149,16 +145,17 @@ function WaveformCanvas({
       const x = i * step + (step - barW) * 0.5;
 
       ctx.globalAlpha = effectiveMuted ? 0.55 : inTrim ? 0.92 : 0.22;
-      ctx.fillStyle = grad;
+      ctx.fillStyle = fill;
       ctx.fillRect(x, cy - amp, barW, amp * 2);
     }
     ctx.globalAlpha = 1;
-  }, [peaks, color, muted, volume, trimStartRatio, trimEndRatio, size]);
+  }, [peaks, color, muted, volume, trimStartRatio, trimEndRatio, size, theme]);
 
   return <canvas ref={canvasRef} className="waveform-canvas" />;
 }
 
 export function EditorView({
+  theme,
   clip,
   busyAction,
   onBack,
@@ -855,7 +852,7 @@ export function EditorView({
           <div className="track-row video-lane">
             <div className="track-label-col">
               <span className="track-name">
-                <span className="track-swatch" style={{ background: 'var(--pale-sky)' }} />
+                <span className="track-swatch" style={{ background: 'var(--game-track)' }} />
                 Video ({Math.round(clip.fps)}fps)
               </span>
               <span className="mono" style={{ fontSize: 10, color: 'var(--ink-engraved)' }}>
@@ -913,7 +910,7 @@ export function EditorView({
             const volPct = Math.round(trackVol * 100);
             const isEffectivelyMuted = isMuted || trackVol <= 0.001;
             const sliderStyle = {
-              '--track-color': isEffectivelyMuted ? '#64748B' : meta.color,
+              '--track-color': isEffectivelyMuted ? 'var(--ink-dim)' : meta.color,
               '--volume-pct': `${volPct}%`,
             } as React.CSSProperties;
 
@@ -971,6 +968,7 @@ export function EditorView({
 
                 <div className="track-lane" onPointerDown={startScrub}>
                   <WaveformCanvas
+                    theme={theme}
                     peaks={waveforms[idx] ?? []}
                     color={meta.color}
                     muted={isMuted}

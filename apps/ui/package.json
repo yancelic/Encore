@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "build:installer": "node scripts/build-installer.mjs",
     "preview": "vite preview",
+    "pretest:ui": "npm run build",
     "test:ui": "playwright test",
     "tauri": "tauri"
   },
