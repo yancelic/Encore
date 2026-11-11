@@ -4,7 +4,7 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 
 ## Download
 
-- **Windows Installer (x64):** [Download Encore (`Encore_0.2.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.2.0_x64-setup.exe)
+- **Windows Installer (x64):** [Download Encore (`Encore_0.3.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.3.0_x64-setup.exe)
 - **All Releases:** [GitHub Releases](https://github.com/yancelic/Encore/releases)
 
 > **Requirements:** Windows 10/11 (64-bit). The installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service, and `ffmpeg.exe`.
@@ -61,7 +61,7 @@ npm --prefix apps/ui run tauri build
 The NSIS installer is written to:
 
 ```text
-target/release/bundle/nsis/Encore_0.2.0_x64-setup.exe
+target/release/bundle/nsis/Encore_0.3.0_x64-setup.exe
 ```
 
 Building creates the local installer; publishing a GitHub release is a separate step.
