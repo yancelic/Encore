@@ -8,6 +8,7 @@ import {
   RefreshCw,
   Settings,
   Square,
+  Volume2,
 } from 'lucide-react';
 import encoreIcon from '../assets/encore-mark.svg';
 import type { CaptureMode, Config, RecorderStatus } from '../types';
@@ -137,6 +138,10 @@ export function TopBar({
       </div>
 
       <div className="top-right">
+        {status?.audio_warnings?.some(Boolean) && <button className="btn-icon" onClick={onOpenSettings}
+          aria-label="Audio needs attention" title={status.audio_warnings.filter(Boolean).join('\n')}>
+          <Volume2 size={16} />
+        </button>}
         <div className="meta-chip mono" title="Clip Buffer · Resolution · Framerate">
           <span>{bufferSecs}s</span>
           <span>·</span>

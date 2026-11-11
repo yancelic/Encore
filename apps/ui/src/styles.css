@@ -1113,6 +1113,13 @@ kbd {
   gap: 6px;
   min-width: 0;
 }
+.audio-routing-note {
+  font-size: 12px;
+  color: var(--ink-engraved);
+  line-height: 1.5;
+  margin: 10px 0;
+  overflow-wrap: anywhere;
+}
 .field-group label {
   font-size: 11px;
   color: var(--ink-engraved);
@@ -1580,7 +1587,8 @@ kbd {
   outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
-.appearance-help {
+.appearance-help,
+.capture-mode-help {
   color: var(--ink-engraved);
   font-size: 10px;
 }

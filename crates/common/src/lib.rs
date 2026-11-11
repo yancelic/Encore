@@ -1,6 +1,7 @@
 //! Shared configuration, IPC types, and Windows autostart helpers for Encore.
 pub mod autostart;
 pub mod ipc;
+pub mod processes;
 pub mod tray_icon;
 
 use global_hotkey::hotkey::{Code, HotKey};
@@ -17,6 +18,14 @@ pub enum CaptureMode {
     ActiveWindow,
 }
 
+/// Device routing remains the default for compatibility with existing settings.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum AudioMode {
+    #[default]
+    Devices,
+    Applications,
+}
+
 /// User-selectable settings, stored as JSON in `%APPDATA%\Encore\config.json`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -28,6 +37,11 @@ pub struct Config {
     pub buffer_secs: u32,
     /// Global hotkey that saves a clip, e.g. "Alt+S".
     pub hotkey: String,
+    pub audio_mode: AudioMode,
+    /// In application mode, capture the selected game's process tree.
+    pub game_audio_enabled: bool,
+    /// Executable filename, never a window title or persisted PID. None = chat off.
+    pub chat_application: Option<String>,
     /// Track 0 (Game): substring of output device name (`None` = default device, `"off"` = silent).
     pub audio_device: Option<String>,
     /// Track 1 (Chat): substring of output device name (`None` or `"off"` = silent, `"default"` = default output).
@@ -53,6 +67,9 @@ impl Default for Config {
             height: 1080,
             buffer_secs: 60,
             hotkey: "Alt+S".into(),
+            audio_mode: AudioMode::Devices,
+            game_audio_enabled: true,
+            chat_application: None,
             audio_device: None,
             chat_device: None,
             mic_device: Some("default".into()),
@@ -97,6 +114,18 @@ pub fn default_games() -> Vec<String> {
 }
 
 impl Config {
+    pub fn validate_audio(&self) -> Result<(), String> {
+        if self.audio_mode == AudioMode::Applications {
+            if !processes::application_loopback_supported() {
+                return Err("Application audio requires Windows build 20348 or later. Select Devices instead.".into());
+            }
+            if self.chat_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
+                return Err("Select a chat executable filename such as Chat.exe, not a window title or file path.".into());
+            }
+        }
+        Ok(())
+    }
+
     pub fn dir() -> PathBuf {
         std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("Encore")
     }
@@ -365,6 +394,9 @@ mod tests {
         let c: Config = serde_json::from_str(r#"{"hotkey":"Ctrl+F9"}"#).unwrap();
         assert_eq!(c.hotkey, "Ctrl+F9");
         assert_eq!(c.fps, 60);
+        assert_eq!(c.audio_mode, AudioMode::Devices);
+        assert!(c.game_audio_enabled);
+        assert!(c.chat_application.is_none());
     }
 
     #[test]

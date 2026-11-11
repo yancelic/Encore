@@ -1,8 +1,9 @@
 //! Win32 system tray icon and context menu for `encore-recorder`.
-use std::io::Write;
 use std::path::Path;
+use std::os::windows::process::CommandExt;
+use std::process::{Command, Stdio};
 
-use encore_common::ipc::UI_WAKE_PIPE;
+use encore_common::ipc;
 use encore_common::tray_icon::{render_tray_bgra_premul, TrayBadge, ICON_DIM};
 use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject, HBITMAP};
@@ -175,7 +176,7 @@ impl TrayIcon {
             let _ = AppendMenuW(menu, MF_STRING, CMD_OPEN_UI, w!("Open Encore"));
             let _ = AppendMenuW(menu, MF_STRING, CMD_OPEN_FOLDER, w!("Open Clips Folder"));
             let _ = AppendMenuW(menu, MF_SEPARATOR, 0, PCWSTR::null());
-            let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("Quit Encore Recorder"));
+            let _ = AppendMenuW(menu, MF_STRING, CMD_QUIT, w!("Quit Encore"));
 
             let mut pt = POINT::default();
             let _ = GetCursorPos(&mut pt);
@@ -208,23 +209,16 @@ impl Drop for TrayIcon {
     }
 }
 
-/// Wake an already-running UI window if hidden in tray, otherwise launch the Encore UI executable
+/// Wake an already-running library, otherwise launch the Encore UI executable
 /// next to this binary, falling back to opening `clips_dir`.
 pub fn launch_ui_or_folder(clips_dir: &Path) {
-    if let Ok(mut f) = std::fs::OpenOptions::new().write(true).open(UI_WAKE_PIPE) {
-        if f.write_all(b"show\n").is_ok() {
-            return;
-        }
-    }
+    if ipc::send_ui_command("show").unwrap_or(false) { return; }
     if let Ok(exe) = std::env::current_exe() {
         for base in exe.ancestors().skip(1).take(2) {
             for name in ["Encore.exe", "encore-ui.exe"] {
                 let cand = base.join(name);
-                if cand.exists() {
-                    let h = HSTRING::from(cand.as_os_str());
-                    unsafe {
-                        let _ = ShellExecuteW(None, w!("open"), PCWSTR(h.as_ptr()), PCWSTR::null(), PCWSTR::null(), SW_SHOWNORMAL);
-                    }
+                if cand.exists() && Command::new(cand).creation_flags(0x0800_0000).stdin(Stdio::null())
+                        .stdout(Stdio::null()).stderr(Stdio::null()).spawn().is_ok() {
                     return;
                 }
             }
@@ -232,6 +226,9 @@ pub fn launch_ui_or_folder(clips_dir: &Path) {
     }
     open_folder(clips_dir);
 }
+
+/// A library close never stops recording. An explicit native Quit requests both exits.
+pub fn close_ui() { let _ = ipc::send_ui_command("quit"); }
 
 pub fn open_folder(path: &Path) {
     let _ = std::fs::create_dir_all(path);

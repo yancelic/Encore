@@ -385,6 +385,7 @@ export function App() {
           themePreference={theme.preference}
           onThemeChange={theme.changePreference}
           config={config}
+          audioWarnings={status?.audio_warnings}
           busy={busyAction === 'settings'}
           onClose={() => setSettingsOpen(false)}
           onSave={handleSaveConfig}

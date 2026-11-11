@@ -1,6 +1,12 @@
-//! Hardware-accelerated MP4 segment writer using Media Foundation `IMFSinkWriter` + DXGI D3D11.
+//! Continuous Media Foundation encoding of GPU video and PCM audio into a bounded RAM replay.
+use crate::packet_sink::PacketSink;
+use encore_encode::{RingBuffer, Snapshot};
+#[cfg(test)]
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
+use windows::core::Interface;
 use windows::Graphics::DirectX::Direct3D11::IDirect3DDevice;
 use windows::Win32::Graphics::Direct3D::{
     D3D_DRIVER_TYPE_HARDWARE, D3D_FEATURE_LEVEL, D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_11_1,
@@ -11,20 +17,22 @@ use windows::Win32::Graphics::Direct3D11::{
 };
 use windows::Win32::Graphics::Dxgi::IDXGIDevice;
 use windows::Win32::Media::MediaFoundation::{
-    eAVEncH264VProfile_Main, IMF2DBuffer, IMFAttributes, IMFDXGIDeviceManager, IMFSinkWriter,
-    MFAudioFormat_AAC, MFAudioFormat_PCM, MFCreateAttributes, MFCreateDXGIDeviceManager,
-    MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateMemoryBuffer, MFCreateSample,
-    MFCreateSinkWriterFromURL, MFMediaType_Audio, MFMediaType_Video, MFShutdown, MFStartup,
-    MFVideoFormat_ARGB32, MFVideoFormat_H264, MFVideoInterlace_Progressive, MFSTARTUP_NOSOCKET,
-    MF_LOW_LATENCY, MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AUDIO_AVG_BYTES_PER_SECOND,
-    MF_MT_AUDIO_BITS_PER_SAMPLE, MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND,
-    MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE, MF_MT_INTERLACE_MODE,
-    MF_MT_MAJOR_TYPE, MF_MT_MAX_KEYFRAME_SPACING, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO,
+    eAVEncH264VProfile_Main, IMF2DBuffer, IMFDXGIDeviceManager, IMFSinkWriter, MFAudioFormat_AAC, MFAudioFormat_PCM,
+    MFCreateAttributes, MFCreateDXGIDeviceManager, MFCreateDXGISurfaceBuffer, MFCreateMediaType, MFCreateMemoryBuffer,
+    MFCreateSample, MFCreateSinkWriterFromMediaSink, MFMediaType_Audio, MFMediaType_Video, MFShutdown, MFStartup,
+    MFVideoFormat_ARGB32, MFVideoFormat_H264, MFVideoInterlace_Progressive, MFSTARTUP_NOSOCKET, MF_LOW_LATENCY,
+    MF_MT_ALL_SAMPLES_INDEPENDENT, MF_MT_AUDIO_AVG_BYTES_PER_SECOND, MF_MT_AUDIO_BITS_PER_SAMPLE,
+    MF_MT_AUDIO_NUM_CHANNELS, MF_MT_AUDIO_SAMPLES_PER_SECOND, MF_MT_AVG_BITRATE, MF_MT_FRAME_RATE, MF_MT_FRAME_SIZE,
+    MF_MT_INTERLACE_MODE, MF_MT_MAJOR_TYPE, MF_MT_MAX_KEYFRAME_SPACING, MF_MT_MPEG2_PROFILE, MF_MT_PIXEL_ASPECT_RATIO,
     MF_MT_SUBTYPE, MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, MF_SINK_WRITER_D3D_MANAGER, MF_VERSION,
 };
 use windows::Win32::System::Com::{CoInitializeEx, COINIT_MULTITHREADED};
 use windows::Win32::System::WinRT::Direct3D11::CreateDirect3D11DeviceFromDXGIDevice;
-use windows::core::{HSTRING, Interface, PCWSTR};
+#[cfg(test)]
+use windows::{
+    core::{HSTRING, PCWSTR},
+    Win32::Media::MediaFoundation::MFCreateSinkWriterFromURL,
+};
 
 pub type Err = Box<dyn std::error::Error + Send + Sync>;
 
@@ -38,14 +46,6 @@ pub fn ensure_com_mta() {
 #[inline]
 fn pack_u32(hi: u32, lo: u32) -> u64 {
     ((hi as u64) << 32) | (lo as u64)
-}
-
-/// Segment frame count aligned to 32/3 seconds (10.667 s = exact 500 AAC frames) for standard FPS values.
-pub fn seg_frames_for_fps(fps: u32) -> u64 {
-    match fps {
-        30 | 60 | 120 | 144 | 240 => (fps as u64) * 32 / 3,
-        _ => (fps as u64).max(1) * 10,
-    }
 }
 
 /// Total 48 kHz audio samples elapsed at the start of frame `frame_idx`.
@@ -118,17 +118,18 @@ impl Drop for MfGpu {
     }
 }
 
-/// Hardware-accelerated MP4 segment writer (H.264 + AAC).
-pub struct SegmentWriter {
+/// Shared input setup for the live packet sink and file-based codec tests.
+pub struct SampleWriter {
     writer: IMFSinkWriter,
     video_stream: u32,
     audio_streams: Vec<u32>,
 }
 
 // Safe across worker threads when every participating thread initializes COM MTA via `ensure_com_mta()`.
-unsafe impl Send for SegmentWriter {}
+unsafe impl Send for SampleWriter {}
 
-impl SegmentWriter {
+impl SampleWriter {
+    #[cfg(test)]
     pub fn open(
         gpu: &MfGpu,
         path: &Path,
@@ -142,7 +143,7 @@ impl SegmentWriter {
         let fps = fps.max(1);
         let out_h = HSTRING::from(path.as_os_str());
         unsafe {
-            let mut attrs: Option<IMFAttributes> = None;
+            let mut attrs = None;
             MFCreateAttributes(&mut attrs, 4)?;
             let attrs = attrs.unwrap();
             attrs.SetUnknown(&MF_SINK_WRITER_D3D_MANAGER, &gpu.dev_mgr)?;
@@ -151,6 +152,19 @@ impl SegmentWriter {
 
             let writer: IMFSinkWriter = MFCreateSinkWriterFromURL(PCWSTR(out_h.as_ptr()), None, &attrs)?;
 
+            Self::configure(writer, in_size, out_size, fps, bitrate, audio_tracks)
+        }
+    }
+
+    fn configure(
+        writer: IMFSinkWriter,
+        in_size: (u32, u32),
+        out_size: (u32, u32),
+        fps: u32,
+        bitrate: u32,
+        audio_tracks: usize,
+    ) -> Result<Self, Err> {
+        unsafe {
             let v_out = MFCreateMediaType()?;
             v_out.SetGUID(&MF_MT_MAJOR_TYPE, &MFMediaType_Video)?;
             v_out.SetGUID(&MF_MT_SUBTYPE, &MFVideoFormat_H264)?;
@@ -235,10 +249,74 @@ impl SegmentWriter {
         }
     }
 
+    #[cfg(test)]
     pub fn finalize(self) -> Result<(), Err> {
         ensure_com_mta();
         unsafe {
             self.writer.Finalize()?;
+        }
+        Ok(())
+    }
+}
+
+/// One encoder for an entire capture size/quality epoch. Saving never finalizes it.
+pub struct ReplayEncoder {
+    encoder: SampleWriter, // Drop the writer before shutting down its custom sink.
+    sink: PacketSink,
+    replay: Arc<Mutex<RingBuffer>>,
+}
+
+pub struct ReplaySnapshot {
+    pub packets: Snapshot,
+    pub formats: Vec<windows::Win32::Media::MediaFoundation::IMFMediaType>,
+}
+
+// Snapshot types are independent MF attribute copies; the save worker initializes COM MTA.
+unsafe impl Send for ReplaySnapshot {}
+
+impl ReplayEncoder {
+    pub fn open(
+        gpu: &MfGpu,
+        replay: Arc<Mutex<RingBuffer>>,
+        in_size: (u32, u32),
+        out_size: (u32, u32),
+        fps: u32,
+        bitrate: u32,
+    ) -> Result<Self, Err> {
+        ensure_com_mta();
+        let sink = PacketSink::new(replay.clone());
+        let encoder = unsafe {
+            let mut attrs = None;
+            MFCreateAttributes(&mut attrs, 4)?;
+            let attrs = attrs.unwrap();
+            attrs.SetUnknown(&MF_SINK_WRITER_D3D_MANAGER, &gpu.dev_mgr)?;
+            attrs.SetUINT32(&MF_READWRITE_ENABLE_HARDWARE_TRANSFORMS, 1)?;
+            attrs.SetUINT32(&MF_LOW_LATENCY, 1)?;
+            let writer = MFCreateSinkWriterFromMediaSink(&sink.interface, &attrs)?;
+            SampleWriter::configure(writer, in_size, out_size, fps.max(1), bitrate, 3)?
+        };
+        Ok(Self { encoder, sink, replay })
+    }
+
+    pub fn write_video(&self, tex: &ID3D11Texture2D, pts: i64, duration: i64) -> Result<(), Err> {
+        self.encoder.write_video(tex, pts, duration)
+    }
+    pub fn write_audio(&self, track: usize, pcm: &[u8], pts: i64, duration: i64) -> Result<(), Err> {
+        self.encoder.write_audio(track, pcm, pts, duration)
+    }
+    pub fn snapshot(&self, duration: Duration) -> Result<ReplaySnapshot, Err> {
+        let formats = self.sink.formats()?;
+        let packets = self
+            .replay
+            .lock()
+            .unwrap()
+            .snapshot(duration)
+            .ok_or("Replay is warming up or waiting for a keyframe after memory pressure")?;
+        Ok(ReplaySnapshot { packets, formats })
+    }
+    pub fn finish(&self) -> Result<(), Err> {
+        unsafe {
+            self.encoder.writer.Finalize()?;
         }
         Ok(())
     }
@@ -249,11 +327,68 @@ mod tests {
     use super::*;
 
     #[test]
-    fn segment_frames_align_video_and_aac_exactly() {
+    fn continuous_encoder_emits_h264_and_three_aac_tracks_to_ram() {
+        use windows::Win32::Graphics::Direct3D11::*;
+        use windows::Win32::Graphics::Dxgi::Common::*;
+        let gpu = MfGpu::new().unwrap();
+        let replay = Arc::new(Mutex::new(RingBuffer::new(Duration::from_secs(2), 32 * 1024 * 1024)));
+        let encoder = ReplayEncoder::open(&gpu, replay.clone(), (640, 360), (640, 360), 60, 2_000_000).unwrap();
+        let desc = D3D11_TEXTURE2D_DESC {
+            Width: 640,
+            Height: 360,
+            MipLevels: 1,
+            ArraySize: 1,
+            Format: DXGI_FORMAT_B8G8R8A8_UNORM,
+            SampleDesc: DXGI_SAMPLE_DESC { Count: 1, Quality: 0 },
+            Usage: D3D11_USAGE_DEFAULT,
+            BindFlags: (D3D11_BIND_RENDER_TARGET.0 | D3D11_BIND_SHADER_RESOURCE.0) as u32,
+            ..Default::default()
+        };
+        let mut texture = None;
+        unsafe {
+            gpu.device.CreateTexture2D(&desc, None, Some(&mut texture)).unwrap();
+        }
+        let texture = texture.unwrap();
+        for frame in 0..120 {
+            let pts = ticks_100ns(frame, 60);
+            let duration = ticks_100ns(frame + 1, 60) - pts;
+            encoder.write_video(&texture, pts, duration).unwrap();
+            let pcm = vec![0; 800 * 4];
+            for track in 0..3 {
+                encoder.write_audio(track, &pcm, pts, duration).unwrap();
+            }
+        }
+        encoder.finish().unwrap();
+        let snapshot = encoder.snapshot(Duration::from_secs(1)).unwrap();
+        assert_eq!(snapshot.formats.len(), 4);
+        assert!(snapshot.packets.streams[0].len() >= 55);
+        assert!(snapshot.packets.streams[0][0].info.keyframe);
+        for stream in snapshot.packets.streams.iter().skip(1) {
+            assert!(stream.len() >= 40);
+        }
+        let output = std::env::temp_dir().join(format!("encore_ram_mux_{}.mp4", std::process::id()));
+        let _ = std::fs::remove_file(&output);
+        crate::clip::save_replay(snapshot, &output, Some("RAM test")).unwrap();
+        let result = std::process::Command::new(crate::clip::ffmpeg_path())
+            .arg("-i")
+            .arg(&output)
+            .args(["-f", "null", "-"])
+            .output()
+            .unwrap();
+        assert!(result.status.success(), "{}", String::from_utf8_lossy(&result.stderr));
+        let description = String::from_utf8_lossy(&result.stderr);
+        assert_eq!(description.lines().filter(|s| s.contains("Audio: aac")).count(), 3);
+        assert!(description.contains("encore_game:RAM test"));
+        std::fs::remove_file(output).unwrap();
+        assert!(replay.lock().unwrap().live_bytes() <= 32 * 1024 * 1024);
+    }
+
+    #[test]
+    fn rational_frame_clock_and_audio_clock_stay_aligned() {
         for fps in [30u32, 60, 120, 144, 240] {
-            let frames = seg_frames_for_fps(fps);
+            let frames = fps as u64 * 120;
             let samples = audio_samples_at_frame(frames, fps);
-            assert_eq!(samples, 512_000); // exact 500 * 1024 AAC frames
+            assert_eq!(samples, 120 * 48_000);
             assert_eq!(ticks_100ns(frames, fps), ticks_100ns(samples, 48_000));
         }
     }

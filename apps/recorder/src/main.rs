@@ -3,11 +3,20 @@
 mod audio;
 mod clip;
 mod clock;
+mod diagnostics;
 mod encoder;
 mod ipc;
+mod packet_sink;
 mod procs;
 mod recorder;
+mod save_worker;
 mod target;
+#[cfg(test)]
+mod test_window;
+#[cfg(test)]
+mod library_lifecycle_test;
+#[cfg(test)]
+mod application_audio_test;
 mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -35,6 +44,7 @@ const WM_TRAY_EVENT: u32 = WM_APP + 22;
 fn apply_cli_overrides(cfg: &mut Config, args: &[String]) {
     if let Some(d) = args.iter().skip_while(|a| *a != "--device").nth(1) {
         cfg.audio_device = Some(d.clone());
+        cfg.audio_mode = encore_common::AudioMode::Devices;
     }
     if let Some(m) = args.iter().skip_while(|a| *a != "--mode").nth(1) {
         cfg.mode = if m.starts_with('w') { CaptureMode::ActiveWindow } else { CaptureMode::GameDetection };
@@ -178,6 +188,7 @@ fn main() {
         hotkey: initial_cfg.hotkey.clone(),
         last_clip: None,
         error: initial_hotkey_err,
+        audio_warnings: Default::default(),
     }));
     let cfg_shared = Arc::new(Mutex::new(initial_cfg.clone()));
     let save = Arc::new(AtomicBool::new(false));
@@ -194,7 +205,7 @@ fn main() {
     let on_status_change = Arc::new(move || unsafe {
         let _ = PostMessageW(Some(HWND(hwnd_raw as *mut _)), WM_UPDATE_TRAY, WPARAM(0), LPARAM(0));
     });
-    target::supervise(
+    let supervisor = target::supervise(
         cfg_shared.clone(),
         save.clone(),
         reload.clone(),
@@ -242,6 +253,7 @@ fn main() {
                             tray::open_folder(&dir);
                         }
                         tray::CMD_QUIT => {
+                            tray::close_ui();
                             stop.store(true, Ordering::Relaxed);
                             let _ = DestroyWindow(hwnd);
                         }
@@ -334,4 +346,8 @@ fn main() {
         }
     }
     stop.store(true, Ordering::Relaxed);
+    // CaptureControl drains accepted replay saves. Keep the process alive until it does.
+    if supervisor.join().is_err() {
+        eprintln!("Capture supervisor stopped unexpectedly during shutdown");
+    }
 }
