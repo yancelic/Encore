@@ -52,6 +52,8 @@ declare global {
       metadata: { currentWindow: { label: string } };
       convertFileSrc: (path: string) => string;
       invoke: (command: string, args?: Record<string, any>) => Promise<any>;
+      transformCallback: (callback: (...args: any[]) => void, once?: boolean) => number;
+      unregisterCallback: (id: number) => void;
     };
   }
 }
@@ -59,7 +61,9 @@ declare global {
 /** The bridge only exists inside the test browser. Nothing is added to app code. */
 export async function mockDesktop(
   page: Page,
-  options: { empty?: boolean; offline?: boolean } = {},
+  options: { empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
+    captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
+    shareError?: boolean; shareDelay?: number } = {},
 ) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -99,11 +103,23 @@ export async function mockDesktop(
           };
       window.__uiCalls = [];
       window.__TAURI_INTERNALS__ = {
+        transformCallback: () => 1,
+        unregisterCallback: () => {},
         metadata: { currentWindow: { label: 'main' } },
         convertFileSrc: (path) => path,
         invoke: async (command, args = {}) => {
           window.__uiCalls.push({ command, args });
           switch (command) {
+            case 'check_for_updates':
+              if (options.updateCheckError) throw new Error('Network unavailable');
+              return options.update ? { version: options.update, notes: 'Better capture and a smoother library.' } : null;
+            case 'install_update':
+              args.onProgress.onmessage({ phase: 'downloading', downloaded: 21_000_000, total: 42_000_000 });
+              await new Promise((resolve) => setTimeout(resolve, 400));
+              if (options.updateInstallError) throw new Error('Update download or signature verification failed');
+              args.onProgress.onmessage({ phase: 'preparing' });
+              // A successful Windows install exits the app rather than resolving.
+              return new Promise(() => {});
             case 'plugin:window|set_theme':
             case 'plugin:window|set_background_color':
               return;
@@ -138,6 +154,14 @@ export async function mockDesktop(
               ];
             case 'list_audio_applications':
               return { supported: true, executables: ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
+            case 'list_capture_applications':
+              if (options.captureApplicationsError) throw new Error('Window enumeration failed');
+              return options.captureApplications ?? [
+                { exe: 'RocketLeague.exe', title: 'Rocket League' },
+                { exe: 'NewGame-Win64-Shipping.exe', title: 'My New Game' },
+              ];
+            case 'pick_game_executable':
+              return options.pickedGame === undefined ? 'OfflineGame.exe' : options.pickedGame;
             case 'save_config':
               await new Promise((resolve) => setTimeout(resolve, 200));
               cfg = args.cfg;
@@ -207,8 +231,11 @@ export async function mockDesktop(
               status = null;
               return;
             case 'trigger_save_clip':
-            case 'copy_clip_to_clipboard':
             case 'reveal_in_explorer':
+              return;
+            case 'copy_clip_to_clipboard':
+              if (options.shareDelay) await new Promise(resolve => setTimeout(resolve, options.shareDelay));
+              if (options.shareError) throw new Error('Share export failed');
               return;
             case 'pick_clips_folder':
               return 'C:\\Videos\\New clips';

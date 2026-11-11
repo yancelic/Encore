@@ -38,6 +38,11 @@ export interface ApplicationAudioOptions {
   executables: string[];
 }
 
+export interface CaptureApplication {
+  exe: string;
+  title: string;
+}
+
 export interface AudioDeviceInfo {
   name: string;
   kind: 'Output' | 'Input';

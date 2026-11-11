@@ -1,7 +1,7 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "Encore",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "identifier": "com.encore.clipper",
   "build": {
     "beforeDevCommand": "npm run dev",
@@ -31,6 +31,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": ["nsis"],
     "publisher": "Encore",
     "copyright": "Copyright (C) 2026 Encore Contributors (GPL-3.0)",
@@ -53,6 +54,13 @@
         "compression": "zlib",
         "installMode": "currentUser"
       }
+    }
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzRURBMTU2MDRCQTg1NjIKUldSaWhib0VWcUh0WTFYVnBNTUQ1UzJYTElWZ01WZUtBcHFpcVlIRkJjU2I5b21qaWc3Z3I0eHUK",
+      "endpoints": ["https://github.com/yancelic/Encore/releases/latest/download/latest.json"],
+      "windows": { "installMode": "passive" }
     }
   }
 }

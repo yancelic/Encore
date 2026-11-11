@@ -50,6 +50,7 @@ test('library search, game navigation, favorites and list actions remain usable'
   await expect
     .poll(() => calls(page, 'copy_clip_to_clipboard'))
     .toHaveLength(1);
+  expect((await calls(page, 'copy_clip_to_clipboard'))[0].args.id).toBe('1');
   await page
     .getByRole('button', { name: 'Delete Last second save', exact: true })
     .click();
@@ -143,6 +144,40 @@ test('editor mixes audio, scrubs, trims and keeps export arguments intact', asyn
   await expect.poll(() => calls(page, 'export_vertical_cmd')).toHaveLength(1);
   expect((await calls(page, 'export_vertical_cmd'))[0].args.blurBg).toBe(false);
   expect(errors).toEqual([]);
+});
+
+test('share uses unsaved trim and audio mix and waits for export', async ({ page }) => {
+  const errors = await mockDesktop(page, { shareDelay: 800 });
+  await page.getByRole('button', { name: 'Open Overtime winner', exact: true }).click();
+  await page.getByRole('button', { name: 'Mute Game audio', exact: true }).click();
+  await page.getByRole('slider', { name: 'Chat audio volume', exact: true }).fill('0.5');
+  const lane = await page.locator('.video-lane .track-lane').boundingBox();
+  await page.mouse.click(lane!.x + lane!.width * 0.25, lane!.y + lane!.height / 2);
+  await page.keyboard.press('i');
+  await page.mouse.click(lane!.x + lane!.width * 0.75, lane!.y + lane!.height / 2);
+  await page.keyboard.press('o');
+  await page.getByRole('button', { name: 'Share Clip', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Preparing share...', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Save Trim', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'Copied to Clipboard!', exact: true })).toBeVisible();
+  const shares = await calls(page, 'copy_clip_to_clipboard');
+  expect(shares).toHaveLength(1);
+  expect(shares[0].args).toMatchObject({
+    id: '1', mutedTracks: [true, false, false], trackVolumes: [1, 0.5, 1],
+  });
+  expect(shares[0].args.startSecs).toBeCloseTo(7.5, 0);
+  expect(shares[0].args.endSecs).toBeCloseTo(22.5, 0);
+  expect(await calls(page, 'trim_clip_cmd')).toHaveLength(0);
+  expect(errors).toEqual([]);
+});
+
+test('failed share displays an error without claiming clipboard success', async ({ page }) => {
+  await mockDesktop(page, { shareError: true });
+  await page.getByRole('button', { name: 'Open Overtime winner', exact: true }).click();
+  await page.getByRole('button', { name: 'Share Clip', exact: true }).click();
+  await expect(page.locator('.toast.error')).toContainText('Share export failed');
+  await expect(page.getByRole('button', { name: 'Share Clip', exact: true })).toBeEnabled();
+  await expect(page.getByRole('button', { name: 'Copied to Clipboard!', exact: true })).toHaveCount(0);
 });
 
 test('settings trap focus, record shortcuts, save changes and restore focus', async ({

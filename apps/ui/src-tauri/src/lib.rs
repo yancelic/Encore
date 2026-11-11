@@ -1,6 +1,8 @@
 //! Tauri backend exposing Encore recorder IPC, config/autostart, clip library, waveforms, and editor commands.
 mod tray;
 mod lifecycle;
+mod updater;
+mod game_picker;
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -13,7 +15,7 @@ use encore_common::autostart;
 use encore_common::ipc::{self, AudioDeviceInfo, IpcRequest, IpcResponse, RecorderStatus};
 use encore_common::{ffmpeg_path, Config};
 use encore_editor::{
-    build_montage, copy_file_to_clipboard, export_vertical_9_16, trim_clip, TrimOpts,
+    build_montage, copy_file_to_clipboard, export_share_clip, export_vertical_9_16, trim_clip, TrimOpts,
     VerticalExportOpts,
 };
 use tauri::{AppHandle, Manager, State};
@@ -125,8 +127,8 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
-    if lifecycle::global().is_closing() { return Err("Encore library is closing".into()); }
-    tauri::async_runtime::spawn_blocking(f)
+    let guard = lifecycle::global().begin_task()?;
+    tauri::async_runtime::spawn_blocking(move || { let _guard = guard; f() })
         .await
         .map_err(|e| format!("task join error: {e}"))?
 }
@@ -183,6 +185,7 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
 
 #[tauri::command]
 async fn start_recorder(app: AppHandle) -> Result<(), String> {
+    let _work = lifecycle::global().begin_export()?;
     let res_dir = app.path().resource_dir().ok();
     run_blocking(move || launch_recorder_blocking(res_dir.as_deref())).await
 }
@@ -200,6 +203,7 @@ async fn stop_recorder() -> Result<(), String> {
 
 #[tauri::command]
 async fn trigger_save_clip() -> Result<(), String> {
+    let _work = lifecycle::global().begin_export()?;
     run_blocking(|| match ipc::send_request(&IpcRequest::SaveClip) {
         Ok(IpcResponse::Ok) => Ok(()),
         Ok(IpcResponse::Err(e)) => Err(e),
@@ -222,6 +226,20 @@ async fn list_audio_devices() -> Vec<AudioDeviceInfo> {
 #[tauri::command]
 async fn list_audio_applications() -> Result<encore_common::processes::ApplicationAudioOptions, String> {
     run_blocking(|| Ok(encore_common::processes::application_audio_options())).await
+}
+
+#[tauri::command]
+async fn list_capture_applications() -> Result<Vec<game_picker::CaptureApplication>, String> {
+    run_blocking(game_picker::running_applications).await
+}
+
+#[tauri::command]
+async fn pick_game_executable() -> Result<Option<String>, String> {
+    run_blocking(|| {
+        rfd::FileDialog::new().set_title("Choose your game executable")
+            .add_filter("Windows game executable", &["exe"]).pick_file()
+            .map(|path| game_picker::executable_filename(&path)).transpose()
+    }).await
 }
 
 #[tauri::command]
@@ -479,8 +497,41 @@ async fn build_montage_cmd(
 }
 
 #[tauri::command]
-fn copy_clip_to_clipboard(path: String) -> Result<(), String> {
-    copy_file_to_clipboard(Path::new(&path))
+async fn copy_clip_to_clipboard(
+    state: State<'_, AppState>,
+    id: String,
+    start_secs: Option<f64>,
+    end_secs: Option<f64>,
+    muted_tracks: Option<Vec<bool>>,
+    track_volumes: Option<Vec<f64>>,
+) -> Result<(), String> {
+    let store = state.store.clone();
+    run_export(move || {
+        let rec = store.lock().map_err(|_| "store mutex poisoned".to_string())?.get(&id)?;
+        let src = PathBuf::from(&rec.path);
+        // Keep successful exports on disk after exit: CF_HDROP references the
+        // file itself, and Discord/Explorer may open it well after this command.
+        let nonce = SystemTime::now().duration_since(UNIX_EPOCH).map_err(|e| e.to_string())?.as_nanos();
+        let dir = Config::dir().join("shares").join(format!("{}_{nonce}", rec.id));
+        let dst = dir.join(src.file_name().ok_or("invalid clip path")?);
+        let muted = muted_tracks.unwrap_or_default();
+        let volumes = track_volumes.unwrap_or_default();
+        let result = export_share_clip(
+            &ffmpeg_path(), &src, &dst,
+            &TrimOpts {
+                start_secs: start_secs.unwrap_or(0.0),
+                end_secs: end_secs.unwrap_or(rec.duration_ms as f64 / 1000.0),
+                audio_tracks: rec.audio_tracks,
+                muted_tracks: &muted,
+                track_volumes: &volumes,
+            },
+        ).and_then(|path| copy_file_to_clipboard(&path));
+        if result.is_err() {
+            let _ = std::fs::remove_file(&dst);
+            let _ = std::fs::remove_dir(&dir);
+        }
+        result
+    }).await
 }
 
 #[tauri::command]
@@ -564,6 +615,8 @@ pub fn run() {
     };
     let state = AppState::open().expect("failed to open Encore clip database");
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(updater::UpdateState::default())
         .manage(state)
         .setup(move |app| {
             #[cfg(windows)]
@@ -572,7 +625,11 @@ pub fn run() {
             tray::start_wake_listener(app.handle().clone());
             // Restore an older recorder's hidden tray as well. This is not needed for
             // newly launched recorders, which always start with their own visible icon.
-            tauri::async_runtime::spawn_blocking(|| {
+            let handle = app.handle().clone();
+            let startup = lifecycle::global().begin_task()?;
+            tauri::async_runtime::spawn_blocking(move || {
+                let _startup = startup;
+                updater::resume_after_update(&handle);
                 let _ = ipc::send_request(&IpcRequest::SetTrayVisible(true));
             });
             Ok(())
@@ -586,12 +643,16 @@ pub fn run() {
             }
         })
         .invoke_handler(tauri::generate_handler![
+            updater::check_for_updates,
+            updater::install_update,
             get_recorder_status,
             start_recorder,
             stop_recorder,
             trigger_save_clip,
             list_audio_devices,
             list_audio_applications,
+            list_capture_applications,
+            pick_game_executable,
             get_config,
             save_config,
             pick_clips_folder,

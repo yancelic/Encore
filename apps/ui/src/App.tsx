@@ -22,6 +22,8 @@ import { MontageModal } from './components/MontageModal';
 import { SettingsModal } from './components/SettingsModal';
 import { TopBar } from './components/TopBar';
 import { useTheme } from './theme';
+import { useUpdater } from './updater';
+import { UpdateDialog, UpdateNotice } from './components/Updates';
 import type { CropRect } from './components/CropControls';
 import type {
   CaptureMode,
@@ -34,6 +36,7 @@ import type {
 
 export function App() {
   const theme = useTheme();
+  const updater = useUpdater();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
   const [config, setConfig] = useState<Config | null>(null);
   const [clips, setClips] = useState<ClipRecord[]>([]);
@@ -219,12 +222,24 @@ export function App() {
     }
   };
 
-  const handleCopyClip = async (path: string) => {
+  const handleCopyClip = async (
+    id: string,
+    startSecs?: number,
+    endSecs?: number,
+    mutedTracks?: boolean[],
+    trackVolumes?: number[],
+  ): Promise<boolean> => {
+    if (busyAction) return false;
+    setBusyAction('share');
     try {
-      await copyClipToClipboard(path);
+      await copyClipToClipboard(id, startSecs, endSecs, mutedTracks, trackVolumes);
       pushToast('success', 'Clip file copied to clipboard — Ctrl+V anywhere!');
+      return true;
     } catch (e) {
       pushToast('error', String(e));
+      return false;
+    } finally {
+      setBusyAction(null);
     }
   };
 
@@ -343,6 +358,8 @@ export function App() {
         onOpenSettings={() => setSettingsOpen(true)}
       />
 
+      <UpdateNotice updater={updater} />
+
       {activeClip ? (
         <EditorView
           theme={theme.resolved}
@@ -373,7 +390,7 @@ export function App() {
           onSortOrderChange={setSortOrder}
           onOpenClip={(c) => setActiveClipId(c.id)}
           onToggleFavorite={handleToggleFavorite}
-          onCopyClip={(c) => handleCopyClip(c.path)}
+          onCopyClip={(c) => handleCopyClip(c.id)}
           onRevealClip={(c) => handleReveal(c.path)}
           onDeleteClip={handleDeleteClip}
           onCreateMontage={(picked) => setMontageClips(picked)}
@@ -382,6 +399,7 @@ export function App() {
 
       {settingsOpen && config && (
         <SettingsModal
+          updater={updater}
           themePreference={theme.preference}
           onThemeChange={theme.changePreference}
           config={config}
@@ -408,6 +426,7 @@ export function App() {
           </div>
         ))}
       </div>
+      <UpdateDialog updater={updater} />
     </div>
   );
 }

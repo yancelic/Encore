@@ -56,7 +56,13 @@ interface EditorViewProps {
     trackVolumes: number[],
     crop?: CropRect,
   ) => Promise<void>;
-  onCopyClip: (path: string) => Promise<void>;
+  onCopyClip: (
+    id: string,
+    startSecs: number,
+    endSecs: number,
+    mutedTracks: boolean[],
+    trackVolumes: number[],
+  ) => Promise<boolean>;
   onRevealClip: (path: string) => Promise<void>;
   onDeleteClip: (clip: ClipRecord) => Promise<void>;
 }
@@ -210,6 +216,7 @@ export function EditorView({
     setTag(clip.tag);
     setDescription(clip.description);
     setDetailsSaved(false);
+    setCopiedFeedback(false);
     setConfirmDelete(false);
     setCrop(DEFAULT_CROP);
     setCanvasMode('original');
@@ -443,9 +450,15 @@ export function EditorView({
   };
 
   const handleCopy = async () => {
-    await onCopyClip(clip.path);
-    setCopiedFeedback(true);
-    window.setTimeout(() => setCopiedFeedback(false), 1800);
+    setCopiedFeedback(false);
+    const copied = await onCopyClip(
+      clip.id, trimStart, trimEnd,
+      mutedTracks.slice(0, trackCount), trackVolumes.slice(0, trackCount),
+    );
+    if (copied) {
+      setCopiedFeedback(true);
+      window.setTimeout(() => setCopiedFeedback(false), 1800);
+    }
   };
 
   const handleSafeDelete = async () => {
@@ -625,7 +638,7 @@ export function EditorView({
             </div>
             {canvasMode === 'custom' && <>
               <CropControls crop={crop} onChange={setCrop} width={clip.width} height={clip.height} />
-              <button className="btn-primary" disabled={busyAction === 'export916'} onClick={() => onExportVertical(clip.id, false, trimStart, trimEnd, mutedTracks.slice(0, trackCount), trackVolumes.slice(0, trackCount), crop)}><Download size={14} />{busyAction === 'export916' ? 'Exporting…' : 'Export cropped MP4'}</button>
+              <button className="btn-primary" disabled={Boolean(busyAction)} onClick={() => onExportVertical(clip.id, false, trimStart, trimEnd, mutedTracks.slice(0, trackCount), trackVolumes.slice(0, trackCount), crop)}><Download size={14} />{busyAction === 'export916' ? 'Exporting…' : 'Export cropped MP4'}</button>
             </>}
 
             {canvasMode === '9:16' && (
@@ -648,7 +661,7 @@ export function EditorView({
                 </div>
                 <button
                   className="btn-primary"
-                  disabled={busyAction === 'export916'}
+                  disabled={Boolean(busyAction)}
                   onClick={() =>
                     onExportVertical(
                       clip.id,
@@ -811,7 +824,7 @@ export function EditorView({
           <div className="transport-right">
             <button
               className="btn-secondary"
-              disabled={!hasTrimChange || busyAction === 'trim'}
+              disabled={!hasTrimChange || Boolean(busyAction)}
               onClick={() =>
                 onTrimClip(
                   clip.id,
@@ -829,11 +842,12 @@ export function EditorView({
 
             <button
               className="btn-primary"
+              disabled={Boolean(busyAction)}
               onClick={handleCopy}
-              title="Copy MP4 file to Windows clipboard (ready to paste in Discord)"
+              title="Export selected range with mixed audio and copy MP4 to clipboard"
             >
               {copiedFeedback ? <Check size={14} /> : <ClipboardCopy size={14} />}
-              {copiedFeedback ? 'Copied to Clipboard!' : 'Share Clip'}
+              {busyAction === 'share' ? 'Preparing share...' : copiedFeedback ? 'Copied to Clipboard!' : 'Share Clip'}
             </button>
           </div>
         </div>

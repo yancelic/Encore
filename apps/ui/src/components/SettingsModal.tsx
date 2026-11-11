@@ -4,7 +4,6 @@ import {
   Keyboard,
   Monitor,
   Moon,
-  Plus,
   Sun,
   Volume2,
   X,
@@ -13,8 +12,12 @@ import { listAudioApplications, listAudioDevices, pickClipsFolder } from '../api
 import type { ApplicationAudioOptions, AudioDeviceInfo, AudioMode, CaptureMode, Config } from '../types';
 import { Modal } from './Modal';
 import type { ThemePreference } from '../theme';
+import type { Updater } from '../updater';
+import { UpdateSettings } from './Updates';
+import { GamePicker } from './GamePicker';
 
 interface SettingsModalProps {
+  updater: Updater;
   themePreference: ThemePreference;
   onThemeChange: (preference: ThemePreference) => void;
   config: Config;
@@ -148,6 +151,7 @@ function formatKeyCombo(e: KeyboardEvent): string | null {
 }
 
 export function SettingsModal({
+  updater,
   themePreference,
   onThemeChange,
   config,
@@ -168,7 +172,6 @@ export function SettingsModal({
   const [applicationsError, setApplicationsError] = useState(false);
   const [recordingKey, setRecordingKey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
-  const [newGame, setNewGame] = useState('');
 
   useEffect(() => {
     listAudioDevices()
@@ -242,20 +245,6 @@ export function SettingsModal({
     }
   };
 
-  const addGame = () => {
-    const trimmed = newGame.trim();
-    if (!trimmed) return;
-    const normalized = trimmed.toLowerCase().endsWith('.exe')
-      ? trimmed
-      : `${trimmed}.exe`;
-    if (
-      !draft.games.some((g) => g.toLowerCase() === normalized.toLowerCase())
-    ) {
-      setDraft((d) => ({ ...d, games: [...d.games, normalized] }));
-    }
-    setNewGame('');
-  };
-
   return (
     <Modal titleId="settings-title" busy={busy} onClose={onClose} wide>
       <div className="modal-header">
@@ -315,6 +304,7 @@ export function SettingsModal({
               immediately.
             </p>
           </section>
+          <UpdateSettings updater={updater} />
           <div className="settings-grid">
             <section className="settings-section">
               <h3>Video capture</h3>
@@ -644,6 +634,7 @@ export function SettingsModal({
                   <button
                     type="button"
                     title={`Remove ${g}`}
+                    aria-label={`Remove ${g}`}
                     onClick={() =>
                       setDraft((d) => ({
                         ...d,
@@ -656,20 +647,9 @@ export function SettingsModal({
                 </span>
               ))}
             </div>
-            <div className="field-row">
-              <input
-                type="text"
-                placeholder="Add game executable (e.g. cs2.exe)..."
-                aria-label="Add game executable"
-                value={newGame}
-                onChange={(e) => setNewGame(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && addGame()}
-              />
-              <button className="btn-secondary" onClick={addGame}>
-                <Plus size={14} />
-                Add Game
-              </button>
-            </div>
+            <GamePicker games={draft.games} onAdd={(exe) => setDraft((d) =>
+              d.games.some((game) => game.toLowerCase() === exe.toLowerCase())
+                ? d : { ...d, games: [...d.games, exe] })} />
           </section>
         </fieldset>
       </div>
