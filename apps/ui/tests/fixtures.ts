@@ -9,6 +9,9 @@ export const config: Config = {
   height: 1080,
   buffer_secs: 30,
   hotkey: 'Alt+S',
+  audio_mode: 'Devices',
+  game_audio_enabled: true,
+  chat_application: null,
   audio_device: null,
   chat_device: 'default',
   mic_device: 'default',
@@ -133,6 +136,8 @@ export async function mockDesktop(
                 { name: 'Headphones', kind: 'Output', is_default: true },
                 { name: 'USB microphone', kind: 'Input', is_default: true },
               ];
+            case 'list_audio_applications':
+              return { supported: true, executables: ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
             case 'save_config':
               await new Promise((resolve) => setTimeout(resolve, 200));
               cfg = args.cfg;

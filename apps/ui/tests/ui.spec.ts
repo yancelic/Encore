@@ -185,6 +185,31 @@ test('settings trap focus, record shortcuts, save changes and restore focus', as
   await expect(dialog).not.toBeVisible();
 });
 
+test('audio routing keeps device choices and accepts a generic application name', async ({ page }) => {
+  await mockDesktop(page);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const dialog = page.getByRole('dialog');
+  await expect(dialog.getByText('Game and chat use the same playback device.', { exact: false })).toBeVisible();
+  await dialog.getByLabel('Game audio', { exact: true }).selectOption('Headphones');
+  await dialog.getByLabel('Separate audio by').selectOption('Applications');
+  await expect(dialog.getByLabel('Chat application')).toBeVisible();
+  await dialog.getByLabel('Chat application').fill('Some Chat App.exe');
+  await expect(dialog.getByText('Some Chat App.exe is not running.', { exact: false })).toBeVisible();
+  await dialog.getByLabel('Chat application').fill('Chat - voice channel');
+  await expect(dialog.getByRole('button', { name: 'Save settings', exact: true })).toBeDisabled();
+  await dialog.getByLabel('Chat application').fill('TeamSpeak.exe');
+  await dialog.getByLabel('Separate audio by').selectOption('Devices');
+  await expect(dialog.getByLabel('Game audio', { exact: true })).toHaveValue('Headphones');
+  await dialog.getByLabel('Separate audio by').selectOption('Applications');
+  await expect(dialog.getByLabel('Chat application')).toHaveValue('TeamSpeak.exe');
+  await dialog.getByRole('button', { name: 'Save settings', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  const saved = (await calls(page, 'save_config'))[0].args.cfg;
+  expect(saved.audio_mode).toBe('Applications');
+  expect(saved.chat_application).toBe('TeamSpeak.exe');
+  expect(saved.audio_device).toBe('Headphones');
+});
+
 test('offline and first-run states still expose recorder controls', async ({
   page,
 }, testInfo) => {

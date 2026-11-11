@@ -1,5 +1,5 @@
-//! 3-buffer WGC capture + high-res CFR pacer + async Media Foundation segment rotation.
-use std::collections::VecDeque;
+//! Rate-limited WGC capture + continuous Media Foundation encoding + bounded RAM replay.
+#[cfg(test)]
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::sync::mpsc::{self, Receiver};
@@ -8,7 +8,8 @@ use std::thread::{self, JoinHandle};
 use std::time::Instant;
 
 use encore_common::ipc::{RecorderState, RecorderStatus};
-use encore_common::Config;
+use encore_common::{AudioMode, Config};
+use encore_encode::RingBuffer;
 use windows::Foundation::{TimeSpan, TypedEventHandler};
 use windows::Graphics::Capture::{Direct3D11CaptureFramePool, GraphicsCaptureItem};
 use windows::Graphics::DirectX::DirectXPixelFormat;
@@ -18,21 +19,58 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_USAGE_DEFAULT, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
+#[cfg(test)]
 use windows::Win32::Graphics::Gdi::HMONITOR;
 use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
+use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsIconic, IsWindow};
 use windows::core::{IInspectable, IUnknown, Interface};
 
 use crate::audio::{self, AudioChunk, AudioTimeline};
 use crate::clock::{self, HighResTimer};
-use crate::encoder::{self, Err, MfGpu, SegmentWriter};
-use crate::clip;
+use crate::diagnostics::{CaptureCounters, ReplayCounters, Stats};
+use crate::encoder::{self, Err, MfGpu, ReplayEncoder};
+use crate::save_worker::SaveWorker;
+#[cfg(test)]
+use crate::{clip, encoder::SampleWriter};
 
-const AUDIO_LOOKBACK_100NS: i64 = 250_000; // 25 ms behind real time so WASAPI packets have arrived
+pub(crate) const AUDIO_LOOKBACK_100NS: i64 = 250_000; // 25 ms behind real time so WASAPI packets have arrived
+const INITIAL_GPU_SLOTS: usize = 6;
+const MAX_GPU_SLOTS: usize = 24;
+const REPLAY_MAX_BYTES: usize = 512 * 1024 * 1024;
+
+/// One copy per recording-time bucket, even on Windows versions without MinUpdateInterval.
+/// Fixed buckets tolerate delivery jitter without accidentally halving the recording rate.
+struct FrameLimiter {
+    fps: u32,
+    origin: Option<i64>,
+    last_bucket: i128,
+}
+
+impl FrameLimiter {
+    fn new(fps: u32) -> Self { Self { fps: fps.clamp(1, 240), origin: None, last_bucket: -1 } }
+
+    fn allow(&mut self, timestamp: i64) -> bool {
+        let origin = *self.origin.get_or_insert(timestamp);
+        if timestamp < origin {
+            self.origin = Some(timestamp);
+            self.last_bucket = -1;
+        }
+        let elapsed = timestamp as i128 - self.origin.unwrap() as i128;
+        // Center buckets around nominal capture times so small timestamp jitter does not
+        // move every other 60 Hz frame into the preceding bucket. Startup can admit one
+        // extra frame; there is no accumulating rate overshoot.
+        let bucket = (elapsed * self.fps as i128 + 5_000_000) / 10_000_000;
+        if bucket <= self.last_bucket { return false; }
+        self.last_bucket = bucket;
+        true
+    }
+}
 
 /// What to capture without holding WinRT types across threads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureTarget {
+    #[cfg(test)]
     Monitor(usize),
     Window(usize),
 }
@@ -46,6 +84,10 @@ pub struct CaptureControl {
 }
 
 impl CaptureControl {
+    pub fn is_finished(&self) -> bool {
+        self.stop.load(Ordering::Relaxed) || self.thread.as_ref().is_none_or(|t| t.is_finished())
+    }
+
     pub fn stop(mut self) -> Result<(), Err> {
         self.stop.store(true, Ordering::Relaxed);
         {
@@ -79,13 +121,14 @@ struct SharedFrames {
     enc_in_use: Option<usize>,
     seq: u64,
     first_frame_qpc: Option<i64>,
-    wgc_frames: u64,
-    cb_total_ns: u64,
-    cb_max_ns: u64,
+    latest_qpc: i64,
+    encoded_seq: u64,
+    limiter: FrameLimiter,
+    counters: CaptureCounters,
 }
 
 impl SharedFrames {
-    fn new(dims: (u32, u32)) -> Self {
+    fn new(dims: (u32, u32), fps: u32) -> Self {
         Self {
             dims,
             slots: Vec::new(),
@@ -93,31 +136,11 @@ impl SharedFrames {
             enc_in_use: None,
             seq: 0,
             first_frame_qpc: None,
-            wgc_frames: 0,
-            cb_total_ns: 0,
-            cb_max_ns: 0,
+            latest_qpc: 0,
+            encoded_seq: 0,
+            limiter: FrameLimiter::new(fps),
+            counters: CaptureCounters::default(),
         }
-    }
-}
-
-enum FinalizerMsg {
-    FinishSegment { path: PathBuf, writer: SegmentWriter },
-    ClearSegments,
-    SaveClip { need: usize, secs: u32, out: PathBuf },
-    Shutdown,
-}
-
-struct Stats {
-    since: Instant,
-    enc_frames: u32,
-    new_frames: u32,
-    prev_wgc: u64,
-    prev_cb_ns: u64,
-}
-
-impl Stats {
-    fn new() -> Self {
-        Self { since: Instant::now(), enc_frames: 0, new_frames: 0, prev_wgc: 0, prev_cb_ns: 0 }
     }
 }
 
@@ -140,7 +163,7 @@ fn create_gpu_texture(gpu: &MfGpu, w: u32, h: u32) -> Result<ID3D11Texture2D, Er
 }
 
 fn create_gpu_slots(gpu: &MfGpu, w: u32, h: u32) -> Result<Vec<ID3D11Texture2D>, Err> {
-    (0..6).map(|_| create_gpu_texture(gpu, w, h)).collect()
+    (0..INITIAL_GPU_SLOTS).map(|_| create_gpu_texture(gpu, w, h)).collect()
 }
 
 /// COM refcount of `tex` (1 when only `SharedFrames` holds it; >1 while MF holds an `IMFSample`).
@@ -148,139 +171,77 @@ fn com_ref_count(tex: &ID3D11Texture2D) -> u32 {
     let unk: IUnknown = tex.cast().expect("IUnknown");
     unsafe {
         let _ = (Interface::vtable(&unk).AddRef)(unk.as_raw());
-        (Interface::vtable(&unk).Release)(unk.as_raw())
+        // `cast` itself owns one extra reference until `unk` drops on return.
+        (Interface::vtable(&unk).Release)(unk.as_raw()).saturating_sub(1)
     }
+}
+
+fn free_gpu_slot(st: &SharedFrames) -> Option<usize> {
+    (0..st.slots.len()).find(|&i| {
+        Some(i) != st.latest && Some(i) != st.enc_in_use && com_ref_count(&st.slots[i]) == 1
+    })
 }
 
 fn create_capture_item(target: CaptureTarget) -> Result<GraphicsCaptureItem, Err> {
     let interop: IGraphicsCaptureItemInterop =
         windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
     let item = match target {
+        #[cfg(test)]
         CaptureTarget::Monitor(h) => unsafe { interop.CreateForMonitor(HMONITOR(h as *mut _))? },
         CaptureTarget::Window(h) => unsafe { interop.CreateForWindow(HWND(h as *mut _))? },
     };
     Ok(item)
 }
 
-fn spawn_finalizer(
-    keep: usize,
-    game_name: Option<String>,
-    status: Arc<Mutex<RecorderStatus>>,
-) -> (mpsc::Sender<FinalizerMsg>, JoinHandle<()>) {
-    let (tx, rx) = mpsc::channel::<FinalizerMsg>();
-    let handle = thread::spawn(move || {
-        encoder::ensure_com_mta();
-        let mut finished: VecDeque<PathBuf> = VecDeque::new();
-        while let Ok(msg) = rx.recv() {
-            match msg {
-                FinalizerMsg::FinishSegment { path, writer } => {
-                    if let Err(e) = writer.finalize() {
-                        eprintln!("segment finalize failed ({}): {e}", path.display());
-                        let _ = std::fs::remove_file(&path);
-                        continue;
-                    }
-                    finished.push_back(path);
-                    while finished.len() > keep {
-                        if let Some(old) = finished.pop_front() {
-                            let _ = std::fs::remove_file(old);
-                        }
-                    }
-                }
-                FinalizerMsg::ClearSegments => {
-                    for old in finished.drain(..) {
-                        let _ = std::fs::remove_file(old);
-                    }
-                }
-                FinalizerMsg::SaveClip { need, secs, out } => {
-                    let skip = finished.len().saturating_sub(need);
-                    let segs: Vec<PathBuf> = finished.iter().skip(skip).cloned().collect();
-                    let game = game_name.clone();
-                    let status_c = status.clone();
-                    {
-                        let mut st = status_c.lock().unwrap();
-                        st.state = RecorderState::Saving;
-                    }
-                    thread::spawn(move || {
-                        match clip::save_clip(&segs, secs, &out, game.as_deref()) {
-                            Ok(()) => {
-                                println!("Saved clip: {}", out.display());
-                                let mut st = status_c.lock().unwrap();
-                                st.last_clip = Some(out.to_string_lossy().into_owned());
-                                st.error = None;
-                                if st.state == RecorderState::Saving {
-                                    st.state = if st.target.is_some() {
-                                        RecorderState::Recording
-                                    } else {
-                                        RecorderState::Idle
-                                    };
-                                }
-                            }
-                            Err(e) => {
-                                eprintln!("Saving clip failed: {e}");
-                                let mut st = status_c.lock().unwrap();
-                                st.error = Some(e);
-                                if st.state == RecorderState::Saving {
-                                    st.state = if st.target.is_some() {
-                                        RecorderState::Recording
-                                    } else {
-                                        RecorderState::Idle
-                                    };
-                                }
-                            }
-                        }
-                    });
-                }
-                FinalizerMsg::Shutdown => break,
-            }
+fn target_process_id(target: CaptureTarget) -> Option<u32> {
+    match target {
+        #[cfg(test)]
+        CaptureTarget::Monitor(_) => None,
+        CaptureTarget::Window(handle) => {
+            let mut pid = 0;
+            unsafe { GetWindowThreadProcessId(HWND(handle as *mut _), Some(&mut pid)); }
+            (pid != 0).then_some(pid)
         }
-    });
-    (tx, handle)
+    }
 }
 
-fn spawn_prewarm(
-    gpu: Arc<MfGpu>,
-    path: PathBuf,
-    in_dims: (u32, u32),
-    target_height: u32,
-    fps: u32,
-) -> Receiver<Result<(PathBuf, SegmentWriter), Err>> {
-    let (tx, rx) = mpsc::channel();
-    let out_dims = encore_common::scale_dimensions(in_dims.0, in_dims.1, target_height);
-    let bitrate = encore_common::target_bitrate(out_dims.0, out_dims.1, fps);
-    thread::spawn(move || {
-        let res = SegmentWriter::open(&gpu, &path, in_dims, out_dims, fps, bitrate, 3).map(|w| (path, w));
-        let _ = tx.send(res);
-    });
-    rx
+fn target_is_available(target: CaptureTarget, owner_pid: Option<u32>) -> bool {
+    match target {
+        #[cfg(test)]
+        CaptureTarget::Monitor(_) => true,
+        CaptureTarget::Window(handle) => {
+            let hwnd = HWND(handle as *mut _);
+            (unsafe { IsWindow(Some(hwnd)).as_bool() && !IsIconic(hwnd).as_bool() })
+                && owner_pid.is_some() && target_process_id(target) == owner_pid
+        }
+    }
 }
 
-fn open_writer(
-    gpu: &MfGpu,
-    path: &Path,
-    in_dims: (u32, u32),
-    target_height: u32,
-    fps: u32,
-) -> Result<SegmentWriter, Err> {
-    let out_dims = encore_common::scale_dimensions(in_dims.0, in_dims.1, target_height);
-    let bitrate = encore_common::target_bitrate(out_dims.0, out_dims.1, fps);
-    SegmentWriter::open(gpu, path, in_dims, out_dims, fps, bitrate, 3)
+fn open_replay_encoder(
+    gpu: &MfGpu, replay: Arc<Mutex<RingBuffer>>, input: (u32, u32), height: u32, fps: u32,
+) -> Result<ReplayEncoder, Err> {
+    let output = encore_common::scale_dimensions(input.0, input.1, height);
+    ReplayEncoder::open(gpu, replay, input, output, fps, encore_common::target_bitrate(output.0, output.1, fps))
 }
 
 fn spawn_audio_track(
-    kind: audio::AudioSourceKind,
+    source: Option<audio::AudioSource>,
+    track: usize,
     label: &'static str,
-    want: Option<String>,
     stop: &Arc<AtomicBool>,
+    status: &Arc<Mutex<RecorderStatus>>,
 ) -> (Option<Receiver<AudioChunk>>, Option<JoinHandle<()>>) {
-    if want.as_deref().is_some_and(|w| w.eq_ignore_ascii_case("off")) {
-        return (None, None);
-    }
-    let (tx, rx) = mpsc::channel();
+    let Some(source) = source else { return (None, None) };
+    let (tx, rx) = mpsc::sync_channel(32);
     let stop_c = stop.clone();
-    let h = thread::spawn(move || {
-        if let Err(e) = audio::run(kind, label, tx, want, stop_c) {
-            eprintln!("audio [{label}] unavailable (continuing silent): {e}");
+    let status = status.clone();
+    let h = thread::spawn(move || match source {
+        audio::AudioSource::Device(kind, want) => {
+            if let Err(e) = audio::run(kind, label, tx, want, stop_c) {
+                audio::warning(&status, track, Some(format!("{label} audio device is unavailable; this track is silent. Check Settings. ({e})")));
+            }
         }
+        application => audio::run_application(application, track, tx, stop_c, status),
     });
     (Some(rx), Some(h))
 }
@@ -290,7 +251,6 @@ fn run_session(
     target: CaptureTarget,
     game_name: Option<String>,
     cfg: Config,
-    seg_dir: PathBuf,
     save: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     shared: Arc<Mutex<SharedFrames>>,
@@ -298,6 +258,8 @@ fn run_session(
     status: Arc<Mutex<RecorderStatus>>,
 ) {
     encoder::ensure_com_mta();
+    let owner_pid = target_process_id(target);
+    if !target_is_available(target, owner_pid) { return; }
     let gpu = match MfGpu::new() {
         Ok(g) => Arc::new(g),
         Err(e) => {
@@ -330,39 +292,41 @@ fn run_session(
     }
 
     let fps = cfg.fps.clamp(1, 240);
-    let seg_frames = encoder::seg_frames_for_fps(fps);
-    let keep = (cfg.buffer_secs as u64 * fps as u64).div_ceil(seg_frames) as usize + 3;
-    let (fin_tx, fin_handle) = spawn_finalizer(keep, game_name, status);
-
-    // Pre-open seg_000000 while starting audio + WGC so Frame 0 encodes with zero startup stall.
-    let mut seg_index = 0u64;
-    let first_path = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-    seg_index += 1;
-    let mut prewarm: Option<Receiver<Result<(PathBuf, SegmentWriter), Err>>> =
-        Some(spawn_prewarm(gpu.clone(), first_path, init_dims, cfg.height, fps));
+    let replay = Arc::new(Mutex::new(RingBuffer::new(std::time::Duration::from_secs(cfg.buffer_secs.max(1) as u64), REPLAY_MAX_BYTES)));
+    let mut active = match open_replay_encoder(&gpu, replay.clone(), init_dims, cfg.height, fps) {
+        Ok(writer) => Some(writer),
+        Err(error) => { eprintln!("RAM replay encoder initialization failed: {error}"); return; }
+    };
+    let saver = SaveWorker::new(gpu.clone(), game_name, status.clone());
+    let mut active_dims = init_dims;
 
     // Spawn up to 3 audio capture threads: Game (0), Chat (1), Mic (2).
     let audio_stop = Arc::new(AtomicBool::new(false));
     let mut audio_rxs: [Option<Receiver<AudioChunk>>; 3] = [None, None, None];
     let mut audio_threads: Vec<JoinHandle<()>> = Vec::new();
 
-    let (rx0, h0) = spawn_audio_track(audio::AudioSourceKind::Loopback, "game", cfg.audio_device.clone(), &audio_stop);
-    audio_rxs[0] = rx0;
-    if let Some(h) = h0 { audio_threads.push(h); }
-
-    if cfg.chat_device.as_deref().is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("off")) {
-        let (rx1, h1) = spawn_audio_track(audio::AudioSourceKind::Loopback, "chat", cfg.chat_device.clone(), &audio_stop);
-        audio_rxs[1] = rx1;
-        if let Some(h) = h1 { audio_threads.push(h); }
+    status.lock().unwrap().audio_warnings = Default::default();
+    let enabled = |s: &Option<String>| s.as_deref().is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("off"));
+    let sources = match cfg.audio_mode {
+        AudioMode::Devices => [
+            (!cfg.audio_device.as_deref().is_some_and(|s| s.eq_ignore_ascii_case("off")))
+                .then(|| audio::AudioSource::Device(audio::AudioSourceKind::Loopback, cfg.audio_device.clone())),
+            enabled(&cfg.chat_device).then(|| audio::AudioSource::Device(audio::AudioSourceKind::Loopback, cfg.chat_device.clone())),
+        ],
+        AudioMode::Applications => [
+            owner_pid.filter(|_| cfg.game_audio_enabled).map(audio::AudioSource::Process),
+            cfg.chat_application.as_deref().filter(|exe| encore_common::processes::valid_executable(exe))
+                .map(|exe| audio::AudioSource::Application(exe.to_string())),
+        ],
+    };
+    let mic = enabled(&cfg.mic_device).then(|| audio::AudioSource::Device(audio::AudioSourceKind::Capture, cfg.mic_device.clone()));
+    for (track, (source, label)) in sources.into_iter().chain([mic]).zip(["Game", "Chat", "Microphone"]).enumerate() {
+        let (rx, thread) = spawn_audio_track(source, track, label, &audio_stop, &status);
+        audio_rxs[track] = rx;
+        if let Some(thread) = thread { audio_threads.push(thread); }
     }
 
-    if cfg.mic_device.as_deref().is_some_and(|s| !s.is_empty() && !s.eq_ignore_ascii_case("off")) {
-        let (rx2, h2) = spawn_audio_track(audio::AudioSourceKind::Capture, "mic", cfg.mic_device.clone(), &audio_stop);
-        audio_rxs[2] = rx2;
-        if let Some(h) = h2 { audio_threads.push(h); }
-    }
-
-    // WGC 3-buffer free-threaded pool with MinUpdateInterval = 0 (unlocked refresh rate).
+    // Bound capture delivery to the recording rate where Windows supports it.
     let pool = match Direct3D11CaptureFramePool::CreateFreeThreaded(
         &gpu.winrt_device,
         DirectXPixelFormat::B8G8R8A8UIntNormalized,
@@ -373,8 +337,6 @@ fn run_session(
         Err(e) => {
             eprintln!("CreateFreeThreaded failed: {e}");
             audio_stop.store(true, Ordering::Relaxed);
-            let _ = fin_tx.send(FinalizerMsg::Shutdown);
-            let _ = fin_handle.join();
             return;
         }
     };
@@ -384,13 +346,14 @@ fn run_session(
             eprintln!("CreateCaptureSession failed: {e}");
             let _ = pool.Close();
             audio_stop.store(true, Ordering::Relaxed);
-            let _ = fin_tx.send(FinalizerMsg::Shutdown);
-            let _ = fin_handle.join();
             return;
         }
     };
     let _ = session.SetIsBorderRequired(false);
-    let _ = session.SetMinUpdateInterval(TimeSpan { Duration: 0 });
+    match session.SetMinUpdateInterval(TimeSpan { Duration: 10_000_000 / fps as i64 }) {
+        Ok(()) => println!("WGC capture interval set to {fps} fps; software copy limiter enabled."),
+        Err(e) => println!("WGC interval unavailable ({e}); using software copy limiter at {fps} fps."),
+    }
 
     let closed_tok = item
         .Closed(&TypedEventHandler::<GraphicsCaptureItem, IInspectable>::new({
@@ -408,6 +371,8 @@ fn run_session(
 
     let pool_w = Arc::new(AtomicI32::new(init_size.Width));
     let pool_h = Arc::new(AtomicI32::new(init_size.Height));
+    // Do not let overlapping event callbacks reserve/copy the same slot or race a resize.
+    let callback_gate = Arc::new(Mutex::new(()));
     let frame_tok = pool.FrameArrived(&TypedEventHandler::<Direct3D11CaptureFramePool, IInspectable>::new({
         let gpu = gpu.clone();
         let shared = shared.clone();
@@ -416,20 +381,29 @@ fn run_session(
         let stop = stop.clone();
         let pool_w = pool_w.clone();
         let pool_h = pool_h.clone();
+        let callback_gate = callback_gate.clone();
         move |p_arg, _| {
             if stop.load(Ordering::Relaxed) {
                 return Ok(());
             }
+            let Ok(_callback) = callback_gate.try_lock() else { return Ok(()) };
             let cb_t0 = Instant::now();
             let Some(p) = p_arg.as_ref() else { return Ok(()) };
             // Drain to newest available frame if more than one queued.
             let mut latest_frame = None;
+            let mut received = 0u64;
             while let Ok(f) = p.TryGetNextFrame() {
+                received += 1;
                 if let Some(old) = latest_frame.replace(f) {
                     let _ = old.Close();
                 }
             }
             let Some(f) = latest_frame else { return Ok(()) };
+            {
+                let mut st = shared.lock().unwrap();
+                st.counters.received += received;
+                st.counters.drained += received.saturating_sub(1);
+            }
 
             let csize = f.ContentSize()?;
             if csize.Width != pool_w.load(Ordering::Relaxed) || csize.Height != pool_h.load(Ordering::Relaxed) {
@@ -453,9 +427,6 @@ fn run_session(
                 return Ok(());
             }
 
-            let surf = f.Surface()?;
-            let acc: IDirect3DDxgiInterfaceAccess = surf.cast()?;
-            let src_tex: ID3D11Texture2D = unsafe { acc.GetInterface()? };
             let now_qpc = clock::qpc_100ns();
             let frame_qpc = f
                 .SystemRelativeTime()
@@ -472,35 +443,47 @@ fn run_session(
                         st.dims = even;
                         st.latest = None;
                         st.enc_in_use = None;
+                        st.limiter = FrameLimiter::new(fps);
                     } else {
                         drop(st);
                         let _ = f.Close();
                         return Ok(());
                     }
                 }
-                let free = (0..st.slots.len()).find(|&i| {
-                    Some(i) != st.latest && Some(i) != st.enc_in_use && com_ref_count(&st.slots[i]) == 1
-                });
-                let slot = match free {
+                if !st.limiter.allow(frame_qpc) {
+                    st.counters.throttled += 1;
+                    drop(st);
+                    let _ = f.Close();
+                    return Ok(());
+                }
+                let slot = match free_gpu_slot(&st) {
                     Some(i) => i,
-                    None if st.slots.len() < 24 => {
+                    None if st.slots.len() < MAX_GPU_SLOTS => {
                         if let Ok(extra) = create_gpu_texture(&gpu, even.0, even.1) {
                             st.slots.push(extra);
                             st.slots.len() - 1
                         } else {
-                            (0..st.slots.len())
-                                .find(|&i| Some(i) != st.latest && Some(i) != st.enc_in_use)
-                                .unwrap_or(0)
+                            st.counters.busy_drops += 1;
+                            drop(st);
+                            let _ = f.Close();
+                            return Ok(());
                         }
                     }
-                    None => (0..st.slots.len())
-                        .find(|&i| Some(i) != st.latest && Some(i) != st.enc_in_use)
-                        .unwrap_or(0),
+                    None => {
+                        st.counters.busy_drops += 1;
+                        drop(st);
+                        let _ = f.Close();
+                        return Ok(());
+                    }
                 };
                 let dst = st.slots[slot].clone();
                 (slot, dst)
             };
 
+            // Rate-limited frames never reach texture extraction or GPU copy submission.
+            let surf = f.Surface()?;
+            let acc: IDirect3DDxgiInterfaceAccess = surf.cast()?;
+            let src_tex: ID3D11Texture2D = unsafe { acc.GetInterface()? };
             let mut src_desc = D3D11_TEXTURE2D_DESC::default();
             unsafe { src_tex.GetDesc(&mut src_desc) };
             let cw = even.0.min(src_desc.Width);
@@ -520,20 +503,34 @@ fn run_session(
             {
                 let mut st = shared.lock().unwrap();
                 if st.dims == even {
+                    if st.seq > st.encoded_seq {
+                        st.counters.superseded += 1;
+                    }
                     st.latest = Some(slot);
                     st.seq += 1;
-                    st.wgc_frames += 1;
+                    st.latest_qpc = frame_qpc;
+                    st.counters.copied += 1;
                     if st.first_frame_qpc.is_none() {
                         st.first_frame_qpc = Some(frame_qpc);
                     }
-                    st.cb_total_ns += cb_ns;
-                    st.cb_max_ns = st.cb_max_ns.max(cb_ns);
+                    st.counters.copy_callback_ns += cb_ns;
+                    st.counters.copy_callback_max_ns = st.counters.copy_callback_max_ns.max(cb_ns);
                 }
                 notify.notify_one();
             }
             Ok(())
         }
     }));
+
+    if let Err(e) = &frame_tok {
+        eprintln!("FrameArrived registration failed: {e}");
+        if let Some(tok) = closed_tok { let _ = item.RemoveClosed(tok); }
+        let _ = session.Close();
+        let _ = pool.Close();
+        audio_stop.store(true, Ordering::Relaxed);
+        for handle in audio_threads { let _ = handle.join(); }
+        return;
+    }
 
     if let Err(e) = session.StartCapture() {
         eprintln!("StartCapture failed: {e}");
@@ -549,18 +546,19 @@ fn run_session(
         for h in audio_threads {
             let _ = h.join();
         }
-        let _ = fin_tx.send(FinalizerMsg::Shutdown);
-        let _ = fin_handle.join();
         return;
     }
 
     // Wait for Frame 0
-    let (mut t0_100ns, mut active_dims) = {
+    let mut t0_100ns = {
         let mut st = shared.lock().unwrap();
         while st.latest.is_none() && !stop.load(Ordering::Relaxed) {
-            st = notify.wait(st).unwrap();
+            st = notify.wait_timeout(st, std::time::Duration::from_millis(250)).unwrap().0;
+            if !target_is_available(target, owner_pid) {
+                stop.store(true, Ordering::Relaxed);
+            }
         }
-        (st.first_frame_qpc.unwrap_or_else(clock::qpc_100ns), st.dims)
+        st.first_frame_qpc.unwrap_or_else(clock::qpc_100ns)
     };
 
     if !stop.load(Ordering::Relaxed) {
@@ -570,28 +568,23 @@ fn run_session(
             AudioTimeline::new(t0_100ns),
         ];
         let timer = HighResTimer::new();
-        let mut stats = std::env::var_os("ENCORE_STATS").map(|_| Stats::new());
-
-        let mut active: Option<(PathBuf, SegmentWriter)> = match prewarm.take().unwrap().recv() {
-            Ok(Ok((p, w))) if active_dims == init_dims => Some((p, w)),
-            Ok(Ok((p, _))) => {
-                let _ = std::fs::remove_file(p);
-                let p2 = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-                seg_index += 1;
-                open_writer(&gpu, &p2, active_dims, cfg.height, fps).ok().map(|w| (p2, w))
-            }
-            _ => {
-                let p2 = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-                seg_index += 1;
-                open_writer(&gpu, &p2, active_dims, cfg.height, fps).ok().map(|w| (p2, w))
-            }
-        };
+        let mut stats = Stats::from_env();
 
         let mut global_idx: u64 = 0;
         let mut local_idx: u64 = 0;
         let mut last_seq: u64 = 0;
+        let mut next_target_check = Instant::now();
 
         while !stop.load(Ordering::Relaxed) {
+            // Closed events are not delivered reliably on every Windows/driver combination.
+            // Poll window lifetime independently, including before the very first frame.
+            if Instant::now() >= next_target_check {
+                next_target_check = Instant::now() + std::time::Duration::from_millis(250);
+                if !target_is_available(target, owner_pid) {
+                    stop.store(true, Ordering::Relaxed);
+                    break;
+                }
+            }
             let window_end_100ns = t0_100ns + encoder::ticks_100ns(global_idx + 1, fps);
             let wakeup_100ns = window_end_100ns + AUDIO_LOOKBACK_100NS;
             timer.sleep_until_100ns(wakeup_100ns);
@@ -601,6 +594,9 @@ fn run_session(
 
             // Guard against large OS sleep / pause (>500 ms late): skip forward cleanly without a burst.
             let now = clock::qpc_100ns();
+            if now - wakeup_100ns >= 10_000_000 / fps as i64 {
+                if let Some(stats) = stats.as_mut() { stats.late_tick(); }
+            }
             if now - wakeup_100ns > 5_000_000 {
                 let behind_frames = (((now - wakeup_100ns) as i128 * fps as i128) / 10_000_000) as i64;
                 if behind_frames > 0 {
@@ -616,7 +612,7 @@ fn run_session(
                 }
             }
 
-            let (slot, tex, cur_dims, is_new, wgc_total, cb_ns) = {
+            let (slot, tex, cur_dims, seq, frame_qpc) = {
                 let mut st = shared.lock().unwrap();
                 let s = match st.latest {
                     Some(s) => s,
@@ -624,39 +620,26 @@ fn run_session(
                 };
                 st.enc_in_use = Some(s);
                 let tex = st.slots[s].clone();
-                let is_new = st.seq != last_seq;
-                last_seq = st.seq;
-                (s, tex, st.dims, is_new, st.wgc_frames, st.cb_total_ns)
+                (s, tex, st.dims, st.seq, st.latest_qpc)
             };
 
-            // Handle resize cleanly (segments of different resolutions cannot concat).
+            // Drain the old epoch before clearing history. Pending saves still own their
+            // immutable old-size snapshots and remain charged to this same memory budget.
             if cur_dims != active_dims {
-                if let Some((path, writer)) = active.take() {
-                    let _ = fin_tx.send(FinalizerMsg::FinishSegment { path, writer });
+                if let Some(writer) = active.take() {
+                    if let Err(error) = writer.finish() { eprintln!("draining replay encoder: {error}"); }
                 }
-                let _ = fin_tx.send(FinalizerMsg::ClearSegments);
-                if let Some(Ok(Ok((p, _)))) = prewarm.take().map(|rx| rx.recv()) {
-                    let _ = std::fs::remove_file(p);
-                }
+                replay.lock().unwrap().clear();
                 active_dims = cur_dims;
                 local_idx = 0;
-                let p = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-                seg_index += 1;
-                match open_writer(&gpu, &p, active_dims, cfg.height, fps) {
-                    Ok(w) => active = Some((p, w)),
+                match open_replay_encoder(&gpu, replay.clone(), active_dims, cfg.height, fps) {
+                    Ok(writer) => active = Some(writer),
                     Err(e) => {
-                        eprintln!("reopen segment failed after resize: {e}");
+                        eprintln!("replay encoder restart failed after resize: {e}");
                         shared.lock().unwrap().enc_in_use = None;
                         break;
                     }
                 }
-            }
-
-            let prewarm_at = seg_frames.saturating_sub((fps as u64 * 3 / 2).min(seg_frames / 2));
-            if local_idx >= prewarm_at && prewarm.is_none() {
-                let next_path = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-                seg_index += 1;
-                prewarm = Some(spawn_prewarm(gpu.clone(), next_path, active_dims, cfg.height, fps));
             }
 
             let s0 = encoder::audio_samples_at_frame(local_idx, fps);
@@ -666,15 +649,26 @@ fn run_session(
             let sample_count = (s1 - s0) as usize;
             let pcms: [Vec<u8>; 3] = std::array::from_fn(|t| timelines[t].pop_samples(sample_count));
 
-            if let Some((_, ref writer)) = active {
+            if let Some(ref writer) = active {
                 let v_pts = encoder::ticks_100ns(local_idx, fps);
                 let v_dur = encoder::ticks_100ns(local_idx + 1, fps) - v_pts;
-                if let Err(e) = writer.write_video(&tex, v_pts, v_dur) {
+                let submit_start = Instant::now();
+                let frame_age = clock::qpc_100ns() - frame_qpc;
+                let result = writer.write_video(&tex, v_pts, v_dur);
+                if let Some(stats) = stats.as_mut() {
+                    stats.video(result.is_ok(), seq == last_seq, submit_start.elapsed().as_nanos(), frame_age);
+                }
+                if let Err(e) = result {
                     eprintln!("write_video failed: {e}");
+                } else {
+                    last_seq = seq;
+                    let mut st = shared.lock().unwrap();
+                    st.encoded_seq = st.encoded_seq.max(seq);
                 }
                 for (t, pcm) in pcms.iter().enumerate() {
                     if let Err(e) = writer.write_audio(t, pcm, a_pts, a_dur) {
                         eprintln!("write_audio[{t}] failed: {e}");
+                        if let Some(stats) = stats.as_mut() { stats.audio_error(); }
                     }
                 }
             }
@@ -689,63 +683,42 @@ fn run_session(
             global_idx += 1;
             local_idx += 1;
 
-            if let Some(st_out) = stats.as_mut() {
-                st_out.enc_frames += 1;
-                if is_new {
-                    st_out.new_frames += 1;
-                }
-                let el = st_out.since.elapsed().as_secs_f64();
-                if el >= 5.0 {
-                    let dwgc = wgc_total - st_out.prev_wgc;
-                    let dcb = cb_ns - st_out.prev_cb_ns;
+            if let Some(stats) = stats.as_mut() {
+                if stats.due() {
+                    let (counters, slots) = {
+                        let mut st = shared.lock().unwrap();
+                        (std::mem::take(&mut st.counters), st.slots.len())
+                    };
                     let out_dims = encore_common::scale_dimensions(active_dims.0, active_dims.1, cfg.height);
-                    println!(
-                        "[stats] WGC {:.1} fps in | enc {:.1} fps ({:.0}% new) | WGC cb avg {:.2} ms | {}x{} -> {}x{}",
-                        dwgc as f64 / el,
-                        st_out.enc_frames as f64 / el,
-                        (st_out.new_frames as f64 * 100.0) / st_out.enc_frames.max(1) as f64,
-                        (dcb as f64 / 1_000_000.0) / dwgc.max(1) as f64,
-                        active_dims.0,
-                        active_dims.1,
-                        out_dims.0,
-                        out_dims.1
-                    );
-                    st_out.prev_wgc = wgc_total;
-                    st_out.prev_cb_ns = cb_ns;
-                    st_out.enc_frames = 0;
-                    st_out.new_frames = 0;
-                    st_out.since = Instant::now();
+                    let replay_stats = {
+                        let buffer = replay.lock().unwrap();
+                        ReplayCounters {
+                            bytes: buffer.live_bytes(), limit: buffer.max_bytes(), history_ms: buffer.available_duration().as_millis(),
+                            memory_drops: buffer.memory_drops(), memory_evictions: buffer.memory_evictions(), pending_saves: saver.pending(),
+                        }
+                    };
+                    stats.report(counters, slots, active_dims, out_dims, fps, replay_stats);
                 }
             }
 
             let want_save = save.swap(false, Ordering::Relaxed);
-            if want_save || local_idx >= seg_frames {
-                if let Some((path, writer)) = active.take() {
-                    let _ = fin_tx.send(FinalizerMsg::FinishSegment { path, writer });
+            if want_save {
+                let result = (|| -> Result<(), String> {
+                    if saver.pending() >= 2 { return Err("Replay save queue is busy; wait for the current clips to finish".into()); }
+                    let writer = active.as_ref().ok_or("Replay encoder is unavailable")?;
+                    let snapshot = writer.snapshot(std::time::Duration::from_secs(cfg.buffer_secs.max(1) as u64)).map_err(|e| e.to_string())?;
+                    let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_nanos();
+                    saver.submit(snapshot, cfg.clips_dir.join(format!("Encore_{stamp}.mp4")))
+                })();
+                if let Err(error) = result {
+                    eprintln!("Replay save request: {error}");
+                    status.lock().unwrap().error = Some(error);
                 }
-                if want_save {
-                    let need = (cfg.buffer_secs as u64 * fps as u64).div_ceil(seg_frames) as usize + 1;
-                    let stamp = std::time::SystemTime::now()
-                        .duration_since(std::time::UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let out = cfg.clips_dir.join(format!("Encore_{stamp}.mp4"));
-                    let _ = fin_tx.send(FinalizerMsg::SaveClip { need, secs: cfg.buffer_secs, out });
-                }
-                local_idx = 0;
-                active = match prewarm.take().and_then(|rx| rx.recv().ok()) {
-                    Some(Ok(pair)) => Some(pair),
-                    _ => {
-                        let p = seg_dir.join(format!("seg_{:06}.mp4", seg_index));
-                        seg_index += 1;
-                        open_writer(&gpu, &p, active_dims, cfg.height, fps).ok().map(|w| (p, w))
-                    }
-                };
             }
         }
 
-        if let Some((path, writer)) = active.take() {
-            let _ = fin_tx.send(FinalizerMsg::FinishSegment { path, writer });
+        if let Some(writer) = active.take() {
+            if let Err(error) = writer.finish() { eprintln!("draining replay encoder: {error}"); }
         }
     }
 
@@ -762,8 +735,7 @@ fn run_session(
     for h in audio_threads {
         let _ = h.join();
     }
-    let _ = fin_tx.send(FinalizerMsg::Shutdown);
-    let _ = fin_handle.join();
+    drop(saver); // Finish bounded pending saves before Media Foundation shuts down.
 }
 
 /// Start capturing `target` (a monitor or a window) in the background.
@@ -774,29 +746,25 @@ pub fn start(
     save: Arc<AtomicBool>,
     status: Arc<Mutex<RecorderStatus>>,
 ) -> Result<CaptureControl, Err> {
-    let segments = Config::dir().join("segments");
-    if let Ok(rd) = std::fs::read_dir(&segments) {
-        for e in rd.flatten() {
-            let _ = std::fs::remove_dir_all(e.path());
-        }
-    }
-    let stamp = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_millis())
-        .unwrap_or(0);
-    let seg_dir = segments.join(stamp.to_string());
-    std::fs::create_dir_all(&seg_dir)?;
-
     let stop = Arc::new(AtomicBool::new(false));
     let notify = Arc::new(Condvar::new());
-    let shared = Arc::new(Mutex::new(SharedFrames::new((0, 0))));
+    let shared = Arc::new(Mutex::new(SharedFrames::new((0, 0), cfg.fps)));
 
     let cfg_c = cfg.clone();
     let stop_c = stop.clone();
     let shared_c = shared.clone();
     let notify_c = notify.clone();
     let thread = thread::spawn(move || {
-        run_session(target, game_name, cfg_c, seg_dir, save, stop_c, shared_c, notify_c, status);
+        run_session(target, game_name, cfg_c, save, stop_c.clone(), shared_c.clone(), notify_c.clone(), status.clone());
+        // Also wake the supervisor/consumers when startup or an encoder failed asynchronously.
+        if !stop_c.swap(true, Ordering::Relaxed) {
+            let mut st = status.lock().unwrap();
+            st.state = RecorderState::Idle;
+            st.target = None;
+            st.error = Some("Capture session ended; waiting to retry the game window.".into());
+        }
+        let _guard = shared_c.lock().unwrap();
+        notify_c.notify_all();
     });
 
     Ok(CaptureControl { stop, notify, state: shared, thread: Some(thread) })
@@ -806,6 +774,132 @@ pub fn start(
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn copy_limiter_handles_high_refresh_and_fractional_intervals() {
+        for fps in [30, 60, 120, 144, 240] {
+            let mut limiter = FrameLimiter::new(fps);
+            let accepted = (0..14_400).filter(|&i| limiter.allow(i * 10_000_000 / 1440)).count();
+            assert!((fps as usize * 10..=fps as usize * 10 + 1).contains(&accepted), "copy count {accepted} at {fps} fps");
+        }
+        let mut limiter = FrameLimiter::new(60);
+        // Real delivery jitters around 60 Hz; comparing each delta to 16.667 ms would halve FPS.
+        let accepted = (0..600).filter(|&i| {
+            let jitter = if i % 2 == 0 { 100 } else { -100 };
+            limiter.allow(1_000 + i * 10_000_000 / 60 + jitter)
+        }).count();
+        assert!(accepted >= 598, "only {accepted} frames survived delivery jitter");
+        assert!(limiter.allow(200_000_000));
+        assert!(!limiter.allow(200_000_000)); // no catch-up burst
+    }
+
+    #[test]
+    fn gpu_slots_exclude_encoder_owned_samples_and_recover_after_release() {
+        let gpu = MfGpu::new().expect("MfGpu");
+        let mut st = SharedFrames::new((64, 64), 60);
+        st.slots = create_gpu_slots(&gpu, 64, 64).unwrap();
+        assert_eq!(com_ref_count(&st.slots[0]), 1, "checking ownership must not count its own temporary reference");
+        st.latest = Some(0);
+        st.enc_in_use = Some(1);
+        let held: Vec<_> = st.slots.iter().skip(2).map(|tex| unsafe {
+            windows::Win32::Media::MediaFoundation::MFCreateDXGISurfaceBuffer(
+                &ID3D11Texture2D::IID, tex, 0, false,
+            ).unwrap()
+        }).collect();
+        assert!(free_gpu_slot(&st).is_none(), "never overwrite a surface still owned by an MF buffer");
+        drop(held);
+        assert_eq!(free_gpu_slot(&st), Some(2));
+        assert_eq!(st.slots.len(), INITIAL_GPU_SLOTS);
+    }
+
+    #[test]
+    #[ignore = "requires Windows capture permission and an interactive desktop; records only the generated test window"]
+    fn window_capture_limits_copies_saves_motion_and_stops_when_window_closes() {
+        let window = crate::test_window::TestWindow::new();
+        encoder::ensure_com_mta();
+        let size = create_capture_item(CaptureTarget::Window(window.hwnd)).unwrap().Size().unwrap();
+        let expected_dims = ((size.Width as u32) & !1, (size.Height as u32) & !1);
+        let root = std::env::temp_dir().join(format!("encore_window_test_{}_{}", std::process::id(),
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let cfg = Config {
+            fps: 60, height: 0, buffer_secs: 2, clips_dir: root.join("clips"),
+            audio_device: Some("off".into()), chat_device: Some("off".into()), mic_device: Some("off".into()),
+            ..Config::default()
+        };
+        let save = Arc::new(AtomicBool::new(false));
+        let status = test_status();
+        let ctl = start(CaptureTarget::Window(window.hwnd), Some("Controlled test".into()),
+            &cfg, save.clone(), status.clone()).unwrap();
+        let deadline = Instant::now() + std::time::Duration::from_secs(8);
+        loop {
+            if ctl.state.lock().unwrap().seq > 0 { break; }
+            assert!(!ctl.is_finished(), "capture stopped during startup: {:?}", status.lock().unwrap().error);
+            assert!(Instant::now() < deadline, "no WGC frame arrived");
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        let began = Instant::now();
+        let first_seq = ctl.state.lock().unwrap().seq;
+        thread::sleep(std::time::Duration::from_secs(3));
+        let (count, dims, slots, busy) = {
+            let st = ctl.state.lock().unwrap();
+            (st.seq - first_seq, st.dims, st.slots.len(), st.counters.busy_drops)
+        };
+        assert!(count as f64 <= began.elapsed().as_secs_f64() * 60.0 + 3.0, "too many GPU copies: {count}");
+        assert_eq!(dims, expected_dims, "capture must match the test window in physical pixels (including DPI scaling)");
+        assert!(slots <= MAX_GPU_SLOTS);
+        assert_eq!(busy, 0, "test workload should not exhaust GPU slots");
+        assert!(!root.exists(), "recording must not create any segment or clip files before saving");
+        save.store(true, Ordering::Relaxed);
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        let clip = loop {
+            if let Some(path) = status.lock().unwrap().last_clip.clone() { break PathBuf::from(path); }
+            assert!(Instant::now() < deadline, "clip save timed out: {:?}", status.lock().unwrap().error);
+            thread::sleep(std::time::Duration::from_millis(20));
+        };
+        unsafe {
+            use windows::Win32::UI::WindowsAndMessaging::{SetWindowPos, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOZORDER};
+            SetWindowPos(window.handle(), None, 0, 0, 800, 450, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOZORDER).unwrap();
+        }
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        let resized_dims = loop {
+            let current_dims = ctl.state.lock().unwrap().dims;
+            if current_dims != dims { break current_dims; }
+            assert!(Instant::now() < deadline, "WGC did not resize with its target window");
+            thread::sleep(std::time::Duration::from_millis(20));
+        };
+        thread::sleep(std::time::Duration::from_secs(3));
+        save.store(true, Ordering::Relaxed);
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        let resized_clip = loop {
+            if let Some(path) = status.lock().unwrap().last_clip.clone() {
+                if Path::new(&path) != clip { break PathBuf::from(path); }
+            }
+            assert!(Instant::now() < deadline, "resized clip save timed out");
+            thread::sleep(std::time::Duration::from_millis(20));
+        };
+        drop(window);
+        let deadline = Instant::now() + std::time::Duration::from_secs(5);
+        while !ctl.is_finished() {
+            assert!(Instant::now() < deadline, "closed window did not stop WGC");
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        ctl.stop().unwrap();
+        let result = Command::new(clip::ffmpeg_path()).args(["-i"]).arg(&clip)
+            .args(["-vf", "tblend=all_mode=difference,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-an", "-f", "null", "-"])
+            .output().unwrap();
+        assert!(result.status.success(), "saved window clip must decode");
+        let decoded = String::from_utf8_lossy(&result.stderr);
+        assert!(decoded.contains(&format!("{}x{}", dims.0, dims.1)), "wrong output dimensions: {decoded}");
+        let changed = String::from_utf8_lossy(&result.stdout).lines()
+            .filter_map(|line| line.strip_prefix("lavfi.signalstats.YAVG="))
+            .filter_map(|v| v.parse::<f64>().ok()).filter(|&v| v > 0.2).count();
+        assert!(changed >= 80, "only {changed} changing frames in a 2-second 60 fps clip");
+        let resized = Command::new(clip::ffmpeg_path()).args(["-i"]).arg(resized_clip)
+            .args(["-an", "-f", "null", "-"]).output().unwrap();
+        assert!(resized.status.success(), "resized clip must decode independently of the old dimensions");
+        assert!(String::from_utf8_lossy(&resized.stderr).contains(&format!("{}x{}", resized_dims.0, resized_dims.1)));
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     fn test_status() -> Arc<Mutex<RecorderStatus>> {
         Arc::new(Mutex::new(RecorderStatus {
@@ -818,20 +912,18 @@ mod tests {
             hotkey: "Ctrl+Alt+K".into(),
             last_clip: None,
             error: None,
+            audio_warnings: Default::default(),
         }))
     }
 
-    /// End-to-end 25s clapper test: flashes GPU texture bright white + emits a 1 kHz audio beep
-    /// every 1.000 s (with silence gaps in between), rolls across 2 segment boundaries (10.67s & 21.33s),
-    /// joins + trims to the last 20s with `clip::save_clip`, and verifies via ffmpeg that all 3 audio
-    /// tracks survive and every audio beep aligns with its visual flash within 25 ms.
+    /// Encode 25 seconds continuously into RAM, save once while encoding continues, then
+    /// save the latest 20 seconds. Decode motion, three audio tracks and flash/beep sync.
     #[test]
-    fn av_sync_and_fps_across_segment_rotations() {
+    fn av_sync_and_motion_survive_continuous_ram_replay_and_concurrent_save() {
         encoder::ensure_com_mta();
         let gpu = MfGpu::new().expect("MfGpu");
         let (w, h) = (640u32, 360u32);
         let fps = 60u32;
-        let seg_frames = encoder::seg_frames_for_fps(fps); // 640 frames = 10.6667s
 
         let desc = D3D11_TEXTURE2D_DESC {
             Width: w,
@@ -878,11 +970,9 @@ mod tests {
             tl.push(AudioChunk { start_100ns: t0_100ns + sec * 10_000_000 + 2_500_000, pcm });
         }
 
-        let mut segs = Vec::new();
-        let mut seg_idx = 0u64;
-        let mut local_idx = 0u64;
-        let mut seg_path = dir.join(format!("seg_{:06}.mp4", seg_idx));
-        let mut writer = Some(SegmentWriter::open(&gpu, &seg_path, (w, h), (w, h), fps, 5_000_000, 3).unwrap());
+        let replay = Arc::new(Mutex::new(RingBuffer::new(std::time::Duration::from_secs(20), 64 * 1024 * 1024)));
+        let writer = ReplayEncoder::open(&gpu, replay.clone(), (w, h), (w, h), fps, 5_000_000).unwrap();
+        let mut first_save = None;
 
         for g in 0..total_frames {
             // Distinct color every frame, and bright white flash for 2 frames starting at `sec + 250 ms` (frame 15).
@@ -900,37 +990,31 @@ mod tests {
             }
             std::thread::sleep(std::time::Duration::from_millis(2));
 
-            let v_pts = encoder::ticks_100ns(local_idx, fps);
-            let v_dur = encoder::ticks_100ns(local_idx + 1, fps) - v_pts;
-            writer.as_ref().unwrap().write_video(&textures[slot], v_pts, v_dur).unwrap();
+            let v_pts = encoder::ticks_100ns(g, fps);
+            let v_dur = encoder::ticks_100ns(g + 1, fps) - v_pts;
+            writer.write_video(&textures[slot], v_pts, v_dur).unwrap();
 
-            let s0 = encoder::audio_samples_at_frame(local_idx, fps);
-            let s1 = encoder::audio_samples_at_frame(local_idx + 1, fps);
+            let s0 = encoder::audio_samples_at_frame(g, fps);
+            let s1 = encoder::audio_samples_at_frame(g + 1, fps);
             let pcm = tl.pop_samples((s1 - s0) as usize);
             let zero_pcm = vec![0u8; pcm.len()];
             let a_pts = encoder::ticks_100ns(s0, 48_000);
             let a_dur = encoder::ticks_100ns(s1, 48_000) - a_pts;
-            writer.as_ref().unwrap().write_audio(0, &pcm, a_pts, a_dur).unwrap();
-            writer.as_ref().unwrap().write_audio(1, &zero_pcm, a_pts, a_dur).unwrap();
-            writer.as_ref().unwrap().write_audio(2, &zero_pcm, a_pts, a_dur).unwrap();
-
-            local_idx += 1;
-            if local_idx >= seg_frames {
-                writer.take().unwrap().finalize().unwrap();
-                segs.push(seg_path);
-                seg_idx += 1;
-                local_idx = 0;
-                seg_path = dir.join(format!("seg_{:06}.mp4", seg_idx));
-                writer = Some(SegmentWriter::open(&gpu, &seg_path, (w, h), (w, h), fps, 5_000_000, 3).unwrap());
+            writer.write_audio(0, &pcm, a_pts, a_dur).unwrap();
+            writer.write_audio(1, &zero_pcm, a_pts, a_dur).unwrap();
+            writer.write_audio(2, &zero_pcm, a_pts, a_dur).unwrap();
+            if g == 700 {
+                let snapshot = writer.snapshot(std::time::Duration::from_secs(5)).unwrap();
+                let output = dir.join("concurrent.mp4");
+                first_save = Some(thread::spawn(move || clip::save_replay(snapshot, &output, Some("VALORANT"))));
             }
         }
-        if let Some(w_last) = writer.take() {
-            w_last.finalize().unwrap();
-            segs.push(seg_path);
-        }
-
+        writer.finish().unwrap();
+        first_save.unwrap().join().unwrap().unwrap();
         let out = dir.join("clip_20s.mp4");
-        clip::save_clip(&segs, 20, &out, Some("VALORANT")).expect("save_clip");
+        let snapshot = writer.snapshot(std::time::Duration::from_secs(20)).unwrap();
+        assert!(replay.lock().unwrap().live_bytes() <= 64 * 1024 * 1024);
+        clip::save_replay(snapshot, &out, Some("VALORANT")).expect("save RAM replay");
 
         // Use ffmpeg to inspect visual flash times (YAVG > 180) and audio non-silence times.
         let ff = clip::ffmpeg_path();
@@ -1009,6 +1093,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "explicit opt-in only: records the user's primary monitor and configured audio"]
     fn monitor_capture_records_60fps_and_saves_clip() {
         use windows_capture::monitor::Monitor;
 
@@ -1081,7 +1166,7 @@ mod tests {
 
         let out = std::env::temp_dir().join(format!("encore_scale_test_{}.mp4", std::process::id()));
         let _ = std::fs::remove_file(&out);
-        let w = SegmentWriter::open(&gpu, &out, in_dims, out_dims, fps, bitrate, 3).unwrap();
+        let w = SampleWriter::open(&gpu, &out, in_dims, out_dims, fps, bitrate, 3).unwrap();
         let silence = vec![0u8; 48_000 * 4 / fps as usize];
         for i in 0..240u64 {
             let v_pts = encoder::ticks_100ns(i, fps);

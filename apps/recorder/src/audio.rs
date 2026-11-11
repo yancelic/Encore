@@ -1,11 +1,12 @@
 //! Multi-track WASAPI capture (loopback for game/chat, input for microphone) + QPC timeline.
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
-use std::sync::Arc;
+use std::sync::mpsc::{SyncSender, TrySendError};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use wasapi::{Device, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+use wasapi::{AudioClient, Device, DeviceEnumerator, Direction, SampleType, StreamMode, WaveFormat};
+use encore_common::{ipc::RecorderStatus, processes};
 
 use crate::clock;
 
@@ -18,6 +19,20 @@ const CONTIGUOUS_TOLERANCE_SAMPLES: i64 = 720; // +/- 15 ms: stay sample-contigu
 pub enum AudioSourceKind {
     Loopback,
     Capture,
+}
+
+pub enum AudioSource {
+    Device(AudioSourceKind, Option<String>),
+    Process(u32),
+    Application(String),
+}
+
+pub fn warning(status: &Mutex<RecorderStatus>, track: usize, message: Option<String>) {
+    let mut status = status.lock().unwrap();
+    if status.audio_warnings[track] != message {
+        if let Some(ref message) = message { eprintln!("audio: {message}"); }
+        status.audio_warnings[track] = message;
+    }
 }
 
 /// Raw captured PCM chunk tagged with the QPC timestamp (100-ns units) of its first sample.
@@ -57,7 +72,7 @@ fn mono_to_stereo(mono: &[u8]) -> Vec<u8> {
 pub fn run(
     kind: AudioSourceKind,
     label: &'static str,
-    tx: Sender<AudioChunk>,
+    tx: SyncSender<AudioChunk>,
     want: Option<String>,
     stop: Arc<AtomicBool>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -86,36 +101,110 @@ pub fn run(
         channels = 1;
     }
 
+    capture_stream(&client, channels, &tx, &stop, || false).map(|_| ())
+}
+
+/// One bounded capture queue per track. If the encoder stalls, discard packets
+/// instead of blocking WASAPI or allowing raw audio memory to grow indefinitely.
+fn capture_stream(
+    client: &AudioClient,
+    channels: usize,
+    tx: &SyncSender<AudioChunk>,
+    stop: &AtomicBool,
+    mut reconnect: impl FnMut() -> bool,
+) -> Result<bool, Box<dyn std::error::Error>> {
     let event = client.set_get_eventhandle()?;
     let cap = client.get_audiocaptureclient()?;
     client.start_stream()?;
-
-    let mut queue = VecDeque::new();
-    while !stop.load(Ordering::Relaxed) {
-        while cap.get_next_packet_size().ok().flatten().unwrap_or(0) > 0 {
-            let info = cap.read_from_device_to_deque(&mut queue)?;
-            if queue.is_empty() {
-                continue;
+    let result = (|| {
+        let mut queue = VecDeque::new();
+        while !stop.load(Ordering::Relaxed) {
+            if reconnect() { return Ok(true); }
+            while !stop.load(Ordering::Relaxed) && cap.get_next_packet_size()?.unwrap_or(0) > 0 {
+                let info = cap.read_from_device_to_deque(&mut queue)?;
+                if queue.is_empty() { continue; }
+                let raw: Vec<u8> = queue.drain(..).collect();
+                let pcm = if channels == 1 { mono_to_stereo(&raw) } else { raw };
+                let frames = (pcm.len() / BYTES_PER_FRAME) as i64;
+                let now = clock::qpc_100ns();
+                let dur_100ns = (frames * 10_000_000) / SAMPLE_RATE;
+                let start_100ns = if info.timestamp > 0 && (now - info.timestamp as i64).abs() < 5_000_000 {
+                    info.timestamp as i64
+                } else { now - dur_100ns };
+                if let Err(TrySendError::Disconnected(_)) = tx.try_send(AudioChunk { start_100ns, pcm }) {
+                    return Ok(false);
+                }
             }
-            let raw: Vec<u8> = queue.drain(..).collect();
-            let pcm = if channels == 1 { mono_to_stereo(&raw) } else { raw };
-            let frames = (pcm.len() / BYTES_PER_FRAME) as i64;
-            let now = clock::qpc_100ns();
-            let dur_100ns = (frames * 10_000_000) / SAMPLE_RATE;
-            let start_100ns = if info.timestamp > 0 && (now - info.timestamp as i64).abs() < 5_000_000 {
-                info.timestamp as i64
-            } else {
-                now - dur_100ns
-            };
-            if tx.send(AudioChunk { start_100ns, pcm }).is_err() {
-                let _ = client.stop_stream();
-                return Ok(());
-            }
+            let _ = event.wait_for_event(20);
         }
-        let _ = event.wait_for_event(20);
-    }
+        Ok(false)
+    })();
     let _ = client.stop_stream();
-    Ok(())
+    result
+}
+
+/// Windows application loopback includes descendants without injecting into them.
+/// A chat application's executable is resolved again every second; titles never
+/// participate. Do not broaden to whole-device recording on failures.
+pub fn run_application(
+    source: AudioSource, track: usize, tx: SyncSender<AudioChunk>, stop: Arc<AtomicBool>,
+    status: Arc<Mutex<RecorderStatus>>,
+) {
+    if !processes::application_loopback_supported() {
+        warning(&status, track, Some("Application audio requires Windows build 20348 or later. Select Devices to route audio manually.".into()));
+        return;
+    }
+    if let Err(error) = wasapi::initialize_mta().ok() {
+        warning(&status, track, Some(format!("Application audio could not initialize: {error}")));
+        return;
+    }
+    let mut preferred = None;
+    while !stop.load(Ordering::Relaxed) {
+        let pid = match &source {
+            AudioSource::Process(pid) => Some(*pid),
+            AudioSource::Application(exe) => processes::application_root(&processes::snapshot(), exe, preferred),
+            AudioSource::Device(..) => unreachable!(),
+        };
+        let Some(pid) = pid else {
+            if let AudioSource::Application(exe) = &source {
+                warning(&status, track, Some(format!("{exe} is not running. Chat audio will reconnect when it opens.")));
+            }
+            wait_retry(&stop);
+            continue;
+        };
+        preferred = Some(pid);
+        let result = (|| -> Result<bool, Box<dyn std::error::Error>> {
+            let client = application_client(pid)?;
+            warning(&status, track, None);
+            let mut check_at = Instant::now() + Duration::from_secs(1);
+            capture_stream(&client, 2, &tx, &stop, || {
+                let AudioSource::Application(exe) = &source else { return false };
+                if Instant::now() < check_at { return false; }
+                check_at = Instant::now() + Duration::from_secs(1);
+                processes::application_root(&processes::snapshot(), exe, preferred) != Some(pid)
+            })
+        })();
+        if matches!(result, Ok(false)) { break; }
+        if let Err(error) = result {
+            warning(&status, track, Some(format!("{} application audio is unavailable; retrying. Select Devices if this persists. ({error})", if track == 0 { "Game" } else { "Chat" })));
+            wait_retry(&stop);
+        }
+    }
+}
+
+fn wait_retry(stop: &AtomicBool) {
+    for _ in 0..20 {
+        if stop.load(Ordering::Relaxed) { break; }
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
+fn application_client(pid: u32) -> Result<AudioClient, Box<dyn std::error::Error>> {
+    let mut client = AudioClient::new_application_loopback_client(pid, true)?;
+    let format = WaveFormat::new(16, 16, SampleType::Int, SAMPLE_RATE as usize, 2, None);
+    client.initialize_client(&format, Direction::Capture,
+        StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: BUFFER_DURATION_HNS }, None)?;
+    Ok(client)
 }
 
 pub use encore_common::ipc::list_audio_devices as list_devices;

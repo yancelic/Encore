@@ -2,6 +2,7 @@ import { convertFileSrc, invoke } from '@tauri-apps/api/core';
 import type { CropRect } from './components/CropControls';
 import type {
   AudioDeviceInfo,
+  ApplicationAudioOptions,
   ClipQuery,
   ClipRecord,
   Config,
@@ -28,6 +29,9 @@ export const triggerSaveClip = (): Promise<void> =>
 
 export const listAudioDevices = (): Promise<AudioDeviceInfo[]> =>
   invoke<AudioDeviceInfo[]>('list_audio_devices');
+
+export const listAudioApplications = (): Promise<ApplicationAudioOptions> =>
+  invoke<ApplicationAudioOptions>('list_audio_applications');
 
 export const getConfig = (): Promise<Config> =>
   invoke<Config>('get_config');

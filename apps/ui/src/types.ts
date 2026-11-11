@@ -1,4 +1,5 @@
 export type CaptureMode = 'GameDetection' | 'ActiveWindow';
+export type AudioMode = 'Devices' | 'Applications';
 
 export interface Config {
   mode: CaptureMode;
@@ -6,6 +7,9 @@ export interface Config {
   height: number;
   buffer_secs: number;
   hotkey: string;
+  audio_mode: AudioMode;
+  game_audio_enabled: boolean;
+  chat_application: string | null;
   audio_device: string | null;
   chat_device: string | null;
   mic_device: string | null;
@@ -26,6 +30,12 @@ export interface RecorderStatus {
   hotkey: string;
   last_clip: string | null;
   error: string | null;
+  audio_warnings?: (string | null)[];
+}
+
+export interface ApplicationAudioOptions {
+  supported: boolean;
+  executables: string[];
 }
 
 export interface AudioDeviceInfo {

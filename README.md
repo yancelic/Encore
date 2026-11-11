@@ -4,18 +4,19 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 
 ## Download
 
-- **Windows Installer (x64):** [Download Encore (`Encore_0.3.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.3.0_x64-setup.exe)
+- **Windows Installer (x64):** [Download Encore (`Encore_0.4.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.4.0_x64-setup.exe)
 - **All Releases:** [GitHub Releases](https://github.com/yancelic/Encore/releases)
 
 > **Requirements:** Windows 10/11 (64-bit). The installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service, and `ffmpeg.exe`.
 
 ## Features
 
-- **Two-process low-overhead architecture:** A pure-Rust headless background recorder (`encore-recorder`) runs without a WebView; the Tauri 2 desktop UI (`encore-ui`) opens only when you browse or edit clips.
+- **Two-process low-overhead architecture:** A pure-Rust background recorder owns the native tray and global save hotkey. Closing the Tauri library exits its UI/WebView2 process while recording continues. Open Encore from the tray to reopen the library; Quit Encore stops both processes. Accepted exports finish before the library exits.
 - **Anti-cheat-conscious capture:** Uses Windows Graphics Capture (WGC), WASAPI loopback/input capture, and Toolhelp process snapshots (`CreateToolhelp32Snapshot`) without DLL injection, in-game overlays, or opening handles to game processes (`OpenProcess`).
-- **Capture modes:** Automatic **Game Detection** (with an editable list of game executables) or **Active Window** capture.
-- **Hardware-accelerated encoding & configurable quality:** Media Foundation hardware H.264 encoding, `720p` / `1080p` / `1440p` / `Native` resolution, `30`–`240` FPS, `15s`–`120s` replay buffer, and a customizable global save hotkey (default `Alt+S`).
-- **3-track audio capture & mixer:** Separate **Game**, **Chat**, and **Microphone** audio tracks with per-track waveforms, volume controls, and mute toggles in the clip editor.
+- **Capture modes:** Automatic **Game Detection** captures the game's main window and stays attached across Alt+Tab and title changes. **Active Window** explicitly follows focus. A minimized game pauses capture; restoration starts a fresh replay history. Neither mode silently falls back to recording the monitor.
+- **GPU capture & configurable quality:** WGC/D3D11 capture and Media Foundation H.264 encoding with hardware transforms enabled (actual encoder selection depends on the system), `720p` / `1080p` / `1440p` / `Native` resolution, `30`–`240` FPS, `15s`–`120s` replay buffer, and a customizable global save hotkey (default `Alt+S`).
+- **RAM replay history:** Continuously encoded H.264 and three AAC tracks are held in a keyframe-aligned memory buffer. No temporary video segments are written during steady recording. Compressed payloads, including pending saves, share a 512 MiB budget; high-quality settings may retain less than the requested duration. Saving runs on a bounded background worker without restarting the live encoder.
+- **3-track audio capture & mixer:** Separate **Game**, **Chat**, and **Microphone** tracks. Choose output-device routing or Windows application process-tree capture (build 20348+), with any chat executable and automatic reconnect after restart. Existing device settings are preserved. Per-track waveforms, volume controls, and mute toggles are available in the editor.
 - **Clip library & export tools:** Search, filter by game, favorite, trim clips, export `9:16` vertical videos, build multi-clip montages, and copy clip files straight to the Windows clipboard (`CF_HDROP`).
 
 ## Workspace Structure
@@ -26,6 +27,8 @@ Low-overhead Windows game clipping and multi-track replay studio built with Rust
 - `crates/encode` — Keyframe-aligned replay ring buffer.
 - `crates/clipstore` — SQLite clip index, thumbnail generator, and waveform extractor.
 - `crates/editor` — Multi-track clip trimming, `9:16` vertical export, montage rendering, and clipboard file sharing.
+
+Capture performance diagnostics, RAM replay limits and the repeatable comparison procedure are described in [docs/capture-performance.md](docs/capture-performance.md).
 
 ## Building from Source
 
@@ -61,7 +64,7 @@ npm --prefix apps/ui run tauri build
 The NSIS installer is written to:
 
 ```text
-target/release/bundle/nsis/Encore_0.3.0_x64-setup.exe
+target/release/bundle/nsis/Encore_0.4.0_x64-setup.exe
 ```
 
 Building creates the local installer; publishing a GitHub release is a separate step.

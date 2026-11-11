@@ -1,10 +1,10 @@
 //! Tauri backend exposing Encore recorder IPC, config/autostart, clip library, waveforms, and editor commands.
 mod tray;
+mod lifecycle;
 
 use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -125,9 +125,21 @@ where
     F: FnOnce() -> Result<T, String> + Send + 'static,
     T: Send + 'static,
 {
+    if lifecycle::global().is_closing() { return Err("Encore library is closing".into()); }
     tauri::async_runtime::spawn_blocking(f)
         .await
         .map_err(|e| format!("task join error: {e}"))?
+}
+
+/// Explicit exports finish before the library exits. Read-only polling is not an exit blocker.
+async fn run_export<F, T>(f: F) -> Result<T, String>
+where
+    F: FnOnce() -> Result<T, String> + Send + 'static,
+    T: Send + 'static,
+{
+    let guard = lifecycle::global().begin_export()?;
+    tauri::async_runtime::spawn_blocking(move || { let _guard = guard; f() })
+        .await.map_err(|e| format!("export task join error: {e}"))?
 }
 
 #[tauri::command]
@@ -143,13 +155,12 @@ async fn get_recorder_status() -> Option<RecorderStatus> {
 
 pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
     if matches!(ipc::send_request(&IpcRequest::GetStatus), Ok(IpcResponse::Status(_))) {
-        let _ = ipc::send_request(&IpcRequest::SetTrayVisible(false));
+        let _ = ipc::send_request(&IpcRequest::SetTrayVisible(true));
         return Ok(());
     }
     let exe = find_recorder_exe(res_dir)
         .ok_or_else(|| "Could not find encore-recorder.exe".to_string())?;
     let mut child = Command::new(&exe)
-        .arg("--no-tray")
         .creation_flags(CREATE_NO_WINDOW)
         .stdin(Stdio::null())
         .stdout(Stdio::null())
@@ -171,24 +182,20 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
 }
 
 #[tauri::command]
-async fn start_recorder(app: AppHandle, tray_ctrl: State<'_, Arc<tray::TrayController>>) -> Result<(), String> {
+async fn start_recorder(app: AppHandle) -> Result<(), String> {
     let res_dir = app.path().resource_dir().ok();
-    let res = run_blocking(move || launch_recorder_blocking(res_dir.as_deref())).await;
-    tray_ctrl.notify_sync();
-    res
+    run_blocking(move || launch_recorder_blocking(res_dir.as_deref())).await
 }
 
 #[tauri::command]
-async fn stop_recorder(tray_ctrl: State<'_, Arc<tray::TrayController>>) -> Result<(), String> {
-    let res = run_blocking(|| match ipc::send_request(&IpcRequest::Shutdown) {
+async fn stop_recorder() -> Result<(), String> {
+    run_blocking(|| match ipc::send_request(&IpcRequest::Shutdown) {
         Ok(IpcResponse::Ok) => Ok(()),
         Ok(IpcResponse::Err(e)) => Err(e),
         Err(_) => Ok(()), // Already offline
         _ => Err("unexpected response".into()),
     })
-    .await;
-    tray_ctrl.notify_sync();
-    res
+    .await
 }
 
 #[tauri::command]
@@ -213,6 +220,11 @@ async fn list_audio_devices() -> Vec<AudioDeviceInfo> {
 }
 
 #[tauri::command]
+async fn list_audio_applications() -> Result<encore_common::processes::ApplicationAudioOptions, String> {
+    run_blocking(|| Ok(encore_common::processes::application_audio_options())).await
+}
+
+#[tauri::command]
 fn get_config() -> Config {
     let mut cfg = Config::load();
     cfg.start_with_windows = cfg.start_with_windows || autostart::is_autostart_enabled();
@@ -220,10 +232,11 @@ fn get_config() -> Config {
 }
 
 #[tauri::command]
-async fn save_config(app: AppHandle, tray_ctrl: State<'_, Arc<tray::TrayController>>, cfg: Config) -> Result<(), String> {
+async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
     encore_common::validate_hotkey(&cfg.hotkey)?;
+    cfg.validate_audio()?;
     let res_dir = app.path().resource_dir().ok();
-    let res = run_blocking(move || {
+    run_blocking(move || {
         let prev_cfg = Config::load();
         std::fs::create_dir_all(&cfg.clips_dir).map_err(|e| e.to_string())?;
         cfg.save().map_err(|e| e.to_string())?;
@@ -242,9 +255,7 @@ async fn save_config(app: AppHandle, tray_ctrl: State<'_, Arc<tray::TrayControll
             _ => Ok(()),
         }
     })
-    .await;
-    tray_ctrl.notify_sync();
-    res
+    .await
 }
 
 #[tauri::command]
@@ -349,7 +360,7 @@ async fn trim_clip_cmd(
 ) -> Result<ClipRecord, String> {
     let store = state.store.clone();
     let volumes = track_volumes.unwrap_or_default();
-    run_blocking(move || {
+    run_export(move || {
         let rec = store.lock().map_err(|_| "store mutex poisoned".to_string())?.get(&id)?;
         let src = PathBuf::from(&rec.path);
         let dir = src.parent().ok_or("invalid clip path")?;
@@ -384,6 +395,7 @@ async fn trim_clip_cmd(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)] // Keep the existing flat Tauri command arguments compatible.
 async fn export_vertical_cmd(
     state: State<'_, AppState>,
     id: String,
@@ -396,7 +408,7 @@ async fn export_vertical_cmd(
 ) -> Result<ClipRecord, String> {
     let store = state.store.clone();
     let volumes = track_volumes.unwrap_or_default();
-    run_blocking(move || {
+    run_export(move || {
         let rec = store.lock().map_err(|_| "store mutex poisoned".to_string())?.get(&id)?;
         let src = PathBuf::from(&rec.path);
         let dir = src.parent().ok_or("invalid clip path")?;
@@ -439,7 +451,7 @@ async fn build_montage_cmd(
     title: String,
 ) -> Result<ClipRecord, String> {
     let store = state.store.clone();
-    run_blocking(move || {
+    run_export(move || {
         let inputs: Vec<PathBuf> = {
             let guard = store.lock().map_err(|_| "store mutex poisoned".to_string())?;
             ids.iter()
@@ -551,26 +563,25 @@ pub fn run() {
         return;
     };
     let state = AppState::open().expect("failed to open Encore clip database");
-    let tray_ctrl = Arc::new(tray::TrayController::new());
-    let tray_ctrl_setup = tray_ctrl.clone();
-    let tray_ctrl_close = tray_ctrl.clone();
-
     tauri::Builder::default()
         .manage(state)
-        .manage(tray_ctrl)
         .setup(move |app| {
             #[cfg(windows)]
             apply_windows_taskbar_icon(app.handle());
-            tray::setup_tray(app.handle(), tray_ctrl_setup)?;
+            #[cfg(windows)]
+            tray::start_wake_listener(app.handle().clone());
+            // Restore an older recorder's hidden tray as well. This is not needed for
+            // newly launched recorders, which always start with their own visible icon.
+            tauri::async_runtime::spawn_blocking(|| {
+                let _ = ipc::send_request(&IpcRequest::SetTrayVisible(true));
+            });
             Ok(())
         })
-        .on_window_event(move |window, event| {
+        .on_window_event(|window, event| {
             if window.label() == "main" {
                 if let tauri::WindowEvent::CloseRequested { api, .. } = event {
-                    if !tray_ctrl_close.quitting.load(Ordering::Relaxed) {
-                        api.prevent_close();
-                        let _ = window.hide();
-                    }
+                    api.prevent_close();
+                    tray::close_library(window.app_handle());
                 }
             }
         })
@@ -580,6 +591,7 @@ pub fn run() {
             stop_recorder,
             trigger_save_clip,
             list_audio_devices,
+            list_audio_applications,
             get_config,
             save_config,
             pick_clips_folder,
