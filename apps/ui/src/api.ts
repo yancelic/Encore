@@ -1,4 +1,5 @@
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
+import type { CropRect } from './components/CropControls';
 import type {
   AudioDeviceInfo,
   ClipQuery,
@@ -82,10 +83,12 @@ export const exportVertical = (
   endSecs: number | null,
   mutedTracks: boolean[],
   trackVolumes: number[],
+  crop?: CropRect,
 ): Promise<ClipRecord> =>
   invoke<ClipRecord>('export_vertical_cmd', {
     id,
     blurBg,
+    crop: crop ? [crop.x, crop.y, crop.width, crop.height] : null,
     startSecs,
     endSecs,
     mutedTracks,

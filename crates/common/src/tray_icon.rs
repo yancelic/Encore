@@ -1,4 +1,4 @@
-//! Shared 32x32 system tray icon renderer with Ready (teal) and REC (red pill) status badges.
+//! Shared red Encore mark with Ready (pale slate) and REC (red pill) status badges.
 
 const BASE_BGRA_PREMUL: &[u8] = include_bytes!("tray_icon.bgra");
 pub const ICON_DIM: usize = 32;
@@ -63,13 +63,13 @@ fn draw_ready_dot(rgba: &mut [u8]) {
                     .sqrt()
                         / (rad * 1.4)))
                     .max(0.0);
-                let r = (22.0 + (255.0 - 22.0) * hl * 0.45) as u8;
-                let g = (201.0 + (255.0 - 201.0) * hl * 0.45) as u8;
-                let b = (179.0 + (255.0 - 179.0) * hl * 0.45) as u8;
+                let r = (191.0 + (255.0 - 191.0) * hl * 0.45) as u8;
+                let g = (213.0 + (255.0 - 213.0) * hl * 0.45) as u8;
+                let b = (226.0 + (255.0 - 226.0) * hl * 0.45) as u8;
                 blend_pixel(rgba, x, y, r, g, b, 255);
             } else if d <= rad + 0.4 {
                 let a = (((rad + 0.4 - d) / 0.8).clamp(0.0, 1.0) * 255.0) as u8;
-                blend_pixel(rgba, x, y, 22, 201, 179, a);
+                blend_pixel(rgba, x, y, 191, 213, 226, a);
             } else if d <= rad + 1.7 {
                 let a = (((rad + 1.7 - d) / 1.3).clamp(0.0, 1.0) * 235.0) as u8;
                 blend_pixel(rgba, x, y, 10, 12, 16, a);
@@ -86,7 +86,7 @@ fn draw_rec_pill(rgba: &mut [u8]) {
             let py = y.clamp(22, 29) as f32;
             let d = ((x as f32 - px).powi(2) + (y as f32 - py).powi(2)).sqrt();
             if d <= 1.2 {
-                let (r, g, b) = if y <= 21 { (255, 112, 112) } else { (239, 52, 52) };
+                let (r, g, b) = if y <= 21 { (228, 49, 64) } else { (194, 1, 20) };
                 blend_pixel(rgba, x, y, r, g, b, 255);
             } else if d <= 2.3 {
                 blend_pixel(rgba, x, y, 11, 13, 18, 240);

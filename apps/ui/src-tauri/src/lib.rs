@@ -388,6 +388,7 @@ async fn export_vertical_cmd(
     state: State<'_, AppState>,
     id: String,
     blur_bg: bool,
+    crop: Option<[f64; 4]>,
     start_secs: Option<f64>,
     end_secs: Option<f64>,
     muted_tracks: Vec<bool>,
@@ -400,7 +401,7 @@ async fn export_vertical_cmd(
         let src = PathBuf::from(&rec.path);
         let dir = src.parent().ok_or("invalid clip path")?;
         let stem = src.file_stem().and_then(|s| s.to_str()).unwrap_or("Clip");
-        let dst = unique_output_path(dir, stem, "_9x16");
+        let dst = unique_output_path(dir, stem, if crop.is_some() { "_crop" } else { "_9x16" });
         let ff = ffmpeg_path();
         export_vertical_9_16(
             &ff,
@@ -408,6 +409,7 @@ async fn export_vertical_cmd(
             &dst,
             &VerticalExportOpts {
                 blur_bg,
+                crop,
                 start_secs,
                 end_secs,
                 audio_tracks: rec.audio_tracks,
@@ -424,7 +426,7 @@ async fn export_vertical_cmd(
             .into_iter()
             .find(|c| c.path == dst.to_string_lossy())
             .ok_or_else(|| "Vertical export created but not indexed".to_string())?;
-        let _ = guard.update_details(&created.id, &format!("{} (9:16)", rec.title), &rec.tag, &rec.description);
+        let _ = guard.update_details(&created.id, &format!("{} ({})", rec.title, if crop.is_some() { "Crop" } else { "9:16" }), &rec.tag, &rec.description);
         guard.get(&created.id)
     })
     .await

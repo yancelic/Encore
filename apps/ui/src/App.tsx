@@ -22,6 +22,7 @@ import { MontageModal } from './components/MontageModal';
 import { SettingsModal } from './components/SettingsModal';
 import { TopBar } from './components/TopBar';
 import { useTheme } from './theme';
+import type { CropRect } from './components/CropControls';
 import type {
   CaptureMode,
   ClipRecord,
@@ -289,6 +290,7 @@ export function App() {
     endSecs: number | null,
     mutedTracks: boolean[],
     trackVolumes: number[],
+    crop?: CropRect,
   ) => {
     setBusyAction('export916');
     try {
@@ -299,10 +301,11 @@ export function App() {
         endSecs,
         mutedTracks,
         trackVolumes,
+        crop,
       );
       await refreshClips();
       setActiveClipId(created.id);
-      pushToast('success', `Exported 9:16 vertical clip "${created.title}"`);
+      pushToast('success', `Exported ${crop ? 'cropped' : '9:16 vertical'} clip "${created.title}"`);
     } catch (e) {
       pushToast('error', String(e));
     } finally {

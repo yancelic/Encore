@@ -1004,6 +1004,67 @@ kbd {
   justify-content: center;
   pointer-events: none;
 }
+.crop-overlay {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+.crop-image-bounds {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+}
+.custom-crop-box {
+  position: absolute;
+  pointer-events: auto;
+  border: 2px solid #ecebf3;
+  box-shadow: 0 0 0 200vw #0009;
+  cursor: move;
+  touch-action: none;
+}
+.crop-box-label {
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  padding: 3px 6px;
+  color: #fff;
+  background: #15171bdd;
+  font-size: 10px;
+  pointer-events: none;
+}
+.crop-resize {
+  position: absolute;
+  bottom: -5px;
+  right: -5px;
+  width: 17px;
+  height: 17px;
+  background: #ecebf3;
+  border: 2px solid #536670;
+  cursor: nwse-resize;
+}
+.custom-crop-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  font-size: 11px;
+  color: var(--ink-engraved);
+}
+.crop-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+.crop-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.crop-fields input {
+  width: 100%;
+}
 .vertical-crop-window {
   height: 100%;
   aspect-ratio: 9/16;

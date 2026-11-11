@@ -52,6 +52,10 @@ Theme coverage additionally exercises light/dark system defaults across all scre
 
 ## Windows installer
 
+Custom crop: select **Custom** under Export format, drag the crop frame or its bottom-right resize handle, or enter Left/Top/Width/Height percentages. Export uses the selected source rectangle at its native pixel size (rounded down to even dimensions for H.264), retaining the trim range and audio mix. Preset vertical exports remain 1080×1920. Native code validates finite crop bounds before invoking FFmpeg. Browser coverage checks moving, resizing, resetting and the export payload; a real FFmpeg test verifies a 640×360 source crops to 320×360 and invalid rectangles are rejected.
+
+The Windows executable, taskbar and tray icons share the red Encore mark from `apps/ui/src/assets/encore-mark.svg`. To regenerate the ICO/PNG assets and the premultiplied BGRA tray base on Windows, run `apps/ui/scripts/update-windows-icons.ps1` after installing UI dependencies. Tray status overlays remain available: pale slate for ready and a red REC badge for recording. Both UI and recorder executables embed the updated ICO. Icon changes require rebuilding the installer.
+
 Use `npm --prefix apps/ui run build:installer` as the standard distribution build. It first builds the release recorder, then runs the Tauri release build with NSIS bundling. The output is `target/release/bundle/nsis/Encore_0.2.0_x64-setup.exe`, with recorder and FFmpeg bundled. It does not install the app or publish a GitHub release. On this development branch the package still carries the existing 0.2.0 version; choose the release version before publishing. Running the installer updates the installed Encore app, so development review should be completed before public release.
 
 For local visual review with the website's existing replay assets, optionally set `ENCORE_TEST_MEDIA_DIR` to its absolute `assets` directory before running tests. Fixtures are served by the test harness and are never bundled into the app.

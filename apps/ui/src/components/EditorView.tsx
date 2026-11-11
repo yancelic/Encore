@@ -32,6 +32,7 @@ import {
 } from '../api';
 import type { ClipRecord } from '../types';
 import type { ResolvedTheme } from '../theme';
+import { CropControls, CropOverlay, DEFAULT_CROP, type CropRect } from './CropControls';
 
 interface EditorViewProps {
   theme: ResolvedTheme;
@@ -53,6 +54,7 @@ interface EditorViewProps {
     endSecs: number | null,
     mutedTracks: boolean[],
     trackVolumes: number[],
+    crop?: CropRect,
   ) => Promise<void>;
   onCopyClip: (path: string) => Promise<void>;
   onRevealClip: (path: string) => Promise<void>;
@@ -183,7 +185,8 @@ export function EditorView({
   const [waveforms, setWaveforms] = useState<number[][]>([]);
   const [trackAudioUrls, setTrackAudioUrls] = useState<string[]>([]);
 
-  const [canvasMode, setCanvasMode] = useState<'original' | '9:16'>('original');
+  const [canvasMode, setCanvasMode] = useState<'original' | '9:16' | 'custom'>('original');
+  const [crop, setCrop] = useState<CropRect>(DEFAULT_CROP);
   const [blurBg, setBlurBg] = useState<boolean>(true);
   const [title, setTitle] = useState<string>(clip.title);
   const [tag, setTag] = useState<string>(clip.tag);
@@ -208,6 +211,8 @@ export function EditorView({
     setDescription(clip.description);
     setDetailsSaved(false);
     setConfirmDelete(false);
+    setCrop(DEFAULT_CROP);
+    setCanvasMode('original');
     setWaveforms([]);
     setTrackAudioUrls([]);
 
@@ -584,6 +589,7 @@ export function EditorView({
                   </div>
                 </div>
               )}
+              {canvasMode === 'custom' && <CropOverlay crop={crop} onChange={setCrop} aspect={clip.width / Math.max(1, clip.height)} />}
             </div>
             <div className="monitor-chin mono">
               <span className="monitor-tally">
@@ -615,7 +621,12 @@ export function EditorView({
               >
                 9:16 vertical
               </button>
+              <button className={`canvas-btn ${canvasMode === 'custom' ? 'active' : ''}`} aria-pressed={canvasMode === 'custom'} onClick={() => setCanvasMode('custom')}>Custom</button>
             </div>
+            {canvasMode === 'custom' && <>
+              <CropControls crop={crop} onChange={setCrop} width={clip.width} height={clip.height} />
+              <button className="btn-primary" disabled={busyAction === 'export916'} onClick={() => onExportVertical(clip.id, false, trimStart, trimEnd, mutedTracks.slice(0, trackCount), trackVolumes.slice(0, trackCount), crop)}><Download size={14} />{busyAction === 'export916' ? 'Exporting…' : 'Export cropped MP4'}</button>
+            </>}
 
             {canvasMode === '9:16' && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginTop: 4 }}>
