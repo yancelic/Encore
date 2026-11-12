@@ -36,9 +36,8 @@ def prepare():
         own_id = run('otool', '-D', str(original)).splitlines()
         own_id = own_id[1].strip() if len(own_id) > 1 else None
         os.chmod(target, 0o755)
-        # Removing a signature is optional: some Homebrew libraries are unsigned.
-        subprocess.run(['codesign', '--remove-signature', str(target)],
-                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        # Preserve the Mach-O link-edit layout while rewriting load commands.
+        # install_name_tool invalidates an existing signature; re-sign below.
         for dependency in dependencies:
             if dependency == own_id or dependency.startswith(('/usr/lib/', '/System/Library/')):
                 continue
