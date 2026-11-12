@@ -410,7 +410,12 @@ fn run() -> Result<(), String> {
 
 pub fn main() {
     let arguments: Vec<_> = std::env::args().collect();
-    let result = if arguments.get(1).map(String::as_str) == Some("--self-test") {
+    let result = if arguments.get(1).map(String::as_str) == Some("--query") {
+        match arguments.get(2).map(String::as_str) {
+            Some(action @ ("applications" | "audio_applications" | "audio_devices" | "diagnostics")) => query(action),
+            _ => Err("Usage: encore-recorder --query applications|audio_applications|audio_devices|diagnostics".into()),
+        }
+    } else if arguments.get(1).map(String::as_str) == Some("--self-test") {
         match arguments.get(2) {
             Some(directory) => self_test(PathBuf::from(directory)),
             None => Err("Usage: encore-recorder --self-test OUTPUT_DIRECTORY".into()),
@@ -422,6 +427,16 @@ pub fn main() {
         eprintln!("Encore recorder: {error}");
         std::process::exit(1);
     }
+}
+
+fn query(action: &str) -> Result<(), String> {
+    let runtime = encore_common::platform::native_runtime().ok_or("Native capture runtime missing")?;
+    let name = if cfg!(target_os = "macos") { "libencore_capture.dylib" } else { "libencore_capture.so" };
+    let api = ffi::Api::load(&runtime.join("lib").join(name))?;
+    let replay = Arc::new(Mutex::new(RingBuffer::new(Duration::from_secs(1), 1024 * 1024)));
+    let mut engine = ffi::Engine::open(api, &runtime, replay)?;
+    println!("{}", engine.request(&json!({"action":action}))?);
+    Ok(())
 }
 
 /// Exercise real GPU rendering, H.264/AAC encoders, RAM replay and muxing without

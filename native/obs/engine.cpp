@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <filesystem>
 #include <memory>
+#include <set>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -42,10 +43,13 @@ struct Engine {
     std::atomic<bool> encoder_failed{false};
     bool configured = false;
     bool core_started = false;
+    log_handler_t previous_log = nullptr;
+    void *previous_log_context = nullptr;
     uint64_t epoch = 0;
     uint32_t width = 0, height = 0;
     uint32_t fps = 60;
     std::chrono::steady_clock::time_point next_poll{};
+    std::chrono::steady_clock::time_point source_created{};
 
     ~Engine() {
         clear_capture();
@@ -53,6 +57,7 @@ struct Engine {
         if (config) obs_data_release(config);
         if (core_started) obs_shutdown();
         encore::platform_shutdown();
+        base_set_log_handler(previous_log, previous_log_context);
     }
 
     void stop_output() {
@@ -127,9 +132,10 @@ struct Engine {
             const char *codec = obs_get_encoder_codec(id);
             if (!codec || std::string(codec) != "h264") continue;
             std::string name(id);
-            if (name.find("software") != std::string::npos || name == "obs_x264" || name.find("videotoolbox.videoencoder.ave.avc") != std::string::npos)
-                software.push_back(name);
-            else hardware.push_back(name);
+            if (name.find("ave.avc") != std::string::npos || name.find("nvenc") != std::string::npos
+                || name.find("vaapi") != std::string::npos || name.find("qsv") != std::string::npos)
+                hardware.push_back(name);
+            else software.push_back(name);
         }
         hardware.insert(hardware.end(), software.begin(), software.end());
         return hardware;
@@ -151,10 +157,18 @@ struct Engine {
         obs_data_set_int(output_settings, "engine", reinterpret_cast<intptr_t>(this));
         output = obs_output_create("encore_packets", "Encore RAM replay", output_settings, nullptr);
         if (!output) throw std::runtime_error("Could not create the replay output");
+        std::string audio_id;
+        const char *registered_id = nullptr;
+        for (size_t i = 0; obs_enum_encoder_types(i, &registered_id); ++i) {
+            const char *codec = obs_get_encoder_codec(registered_id);
+            if (!codec || std::string(codec) != "aac") continue;
+            if (audio_id.empty() || std::string(registered_id) == "CoreAudio_AAC") audio_id = registered_id;
+        }
+        if (audio_id.empty()) throw std::runtime_error("No AAC encoder is registered; check native runtime audio plugins");
         for (unsigned i = 0; i < 3; ++i) {
             OBSDataAutoRelease aac = obs_data_create();
             obs_data_set_int(aac, "bitrate", 192);
-            encoders[i + 1] = obs_audio_encoder_create("ffmpeg_aac", ("Encore audio " + std::to_string(i)).c_str(), aac, i, nullptr);
+            encoders[i + 1] = obs_audio_encoder_create(audio_id.c_str(), ("Encore audio " + std::to_string(i)).c_str(), aac, i, nullptr);
             if (!encoders[i + 1]) throw std::runtime_error("AAC encoder unavailable; check the OBS runtime");
             obs_encoder_set_audio(encoders[i + 1], obs_get_audio());
             obs_output_set_audio_encoder(output, encoders[i + 1], i);
@@ -219,6 +233,19 @@ struct Engine {
         OBSDataAutoRelease settings = obs_data_create();
         encore::platform_audio_settings(settings, selection, app);
         const char *id = encore::platform_audio_source(track == 2, app);
+        if (!app && selection != "default") {
+            obs_properties_t *properties = obs_get_source_properties(id);
+            obs_property_t *devices = properties ? obs_properties_get(properties, "device_id") : nullptr;
+            for (size_t i = 0; devices && i < obs_property_list_item_count(devices); ++i) {
+                const std::string name = obs_property_list_item_name(devices, i);
+                const std::string value = obs_property_list_item_string(devices, i);
+                if (name == selection || value == selection || name.find(selection) != std::string::npos) {
+                    obs_data_set_string(settings, "device_id", value.c_str());
+                    break;
+                }
+            }
+            if (properties) obs_properties_destroy(properties);
+        }
         audio[track] = obs_source_create(id, ("Encore " + std::to_string(track)).c_str(), settings, nullptr);
         if (!audio[track]) { warnings[track] = "Could not open selected audio source"; return; }
         obs_source_set_audio_mixers(audio[track], 1u << track);
@@ -229,6 +256,7 @@ struct Engine {
     void create_capture(const encore::Application &application) {
         clear_capture();
         target = application;
+        source_created = std::chrono::steady_clock::now();
         OBSDataAutoRelease settings = obs_data_create();
         if (encore::platform_is_wayland()) {
             const auto file = fs::path(obs_data_get_string(config, "state_dir")) / "capture-source.json";
@@ -307,7 +335,12 @@ struct Engine {
         }
         if (!video) return;
         const auto sw = obs_source_get_width(video), sh = obs_source_get_height(video);
-        if (!sw || !sh) { if (output) stop_output(); return; }
+        if (!sw || !sh) {
+            if (output) stop_output();
+            if (now - source_created > std::chrono::seconds(3))
+                error = "Waiting for the selected window. Complete the screen-sharing dialog or grant Screen Recording permission, then reselect the source if needed.";
+            return;
+        }
         if (!output || width != sw || height != sh) start_output();
     }
 
@@ -321,6 +354,56 @@ struct Engine {
         obs_data_set_string(data, "encoder", encoder_name.c_str());
         for (unsigned i = 0; i < 3; ++i) obs_data_set_string(data, ("audio_warning_" + std::to_string(i)).c_str(), warnings[i].c_str());
         return data;
+    }
+
+    obs_data_t *audio_devices() {
+        auto *result = obs_data_create();
+        OBSDataArrayAutoRelease devices = obs_data_array_create();
+        for (unsigned direction = 0; direction < 2; ++direction) {
+            const char *source_id = encore::platform_audio_source(direction == 1, false);
+            obs_properties_t *properties = obs_get_source_properties(source_id);
+            auto *list = properties ? obs_properties_get(properties, "device_id") : nullptr;
+            if (!list && direction == 0) {
+                OBSDataAutoRelease item = obs_data_create();
+                obs_data_set_string(item, "name", "default");
+                obs_data_set_string(item, "kind", "Output");
+                obs_data_set_bool(item, "is_default", true);
+                obs_data_array_push_back(devices, item);
+            }
+            for (size_t i = 0; list && i < obs_property_list_item_count(list); ++i) {
+                OBSDataAutoRelease item = obs_data_create();
+                obs_data_set_string(item, "name", obs_property_list_item_name(list, i));
+                obs_data_set_string(item, "kind", direction == 0 ? "Output" : "Input");
+                obs_data_set_bool(item, "is_default", std::string(obs_property_list_item_string(list, i)) == "default");
+                obs_data_array_push_back(devices, item);
+            }
+            if (properties) obs_properties_destroy(properties);
+        }
+        obs_data_set_array(result, "devices", devices);
+        return result;
+    }
+
+    obs_data_t *diagnostics() {
+        auto *result = obs_data_create();
+        obs_data_set_string(result, "obs_version", obs_get_version_string());
+        obs_data_set_bool(result, "wayland", encore::platform_is_wayland());
+        obs_data_set_string(result, "video_source", encore::platform_video_source());
+        const char *id = nullptr;
+        OBSDataArrayAutoRelease sources = obs_data_array_create();
+        for (size_t i = 0; obs_enum_input_types(i, &id); ++i) {
+            OBSDataAutoRelease source = obs_data_create();
+            obs_data_set_string(source, "id", id);
+            obs_data_array_push_back(sources, source);
+        }
+        obs_data_set_array(result, "sources", sources);
+        OBSDataArrayAutoRelease encoders = obs_data_array_create();
+        for (const auto &name : video_encoders()) {
+            OBSDataAutoRelease encoder = obs_data_create();
+            obs_data_set_string(encoder, "id", name.c_str());
+            obs_data_array_push_back(encoders, encoder);
+        }
+        obs_data_set_array(result, "h264_encoders", encoders);
+        return result;
     }
 };
 
@@ -353,7 +436,7 @@ void output_packet(void *data, encoder_packet *packet) {
 
 void load_modules(const fs::path &runtime) {
     // Frontend tools require Qt widgets and must never enter the background recorder.
-    const char *safe_modules[] = {"mac-capture", "mac-videotoolbox", "linux-capture", "linux-pipewire",
+    const char *safe_modules[] = {"mac-capture", "mac-videotoolbox", "coreaudio-encoder", "linux-capture", "linux-pipewire",
         "linux-pulseaudio", "linux-pipewire-audio", "obs-ffmpeg", "obs-x264", "obs-nvenc", "obs-qsv11"};
     for (auto *name : safe_modules) obs_add_safe_module(name);
     if (!runtime.empty()) {
@@ -379,6 +462,11 @@ void load_modules(const fs::path &runtime) {
 extern "C" void *ec_create(const char *runtime, ec_packet_callback packet, void *context) {
     try {
         auto engine = std::make_unique<Engine>();
+        base_get_log_handler(&engine->previous_log, &engine->previous_log_context);
+        base_set_log_handler([](int, const char *message, va_list arguments, void *) {
+            std::vfprintf(stderr, message, arguments);
+            std::fputc('\n', stderr);
+        }, nullptr);
         engine->runtime = runtime ? runtime : ""; engine->callback = packet; engine->context = context;
         if (!encore::platform_init(engine->error)) throw std::runtime_error(engine->error);
         if (!obs_startup("en-US", nullptr, nullptr)) throw std::runtime_error("Could not start libobs");
@@ -413,7 +501,29 @@ extern "C" const char *ec_request(void *handle, const char *json) {
             engine->configure(config);
         } else if (action == "select_source") {
             engine->clear_capture();
+            const auto path = fs::path(obs_data_get_string(engine->config, "state_dir")) / "capture-source.json";
+            std::error_code ignored;
+            fs::remove(path, ignored);
             engine->next_poll = {};
+        } else if (action == "audio_devices" || action == "diagnostics") {
+            OBSDataAutoRelease result = action == "audio_devices" ? engine->audio_devices() : engine->diagnostics();
+            engine->reply = obs_data_get_json(result);
+            return engine->reply.c_str();
+        } else if (action == "audio_applications") {
+            OBSDataAutoRelease result = obs_data_create();
+            const char *source = encore::platform_audio_source(false, true);
+            obs_data_set_bool(result, "supported", obs_get_source_output_flags(source) & OBS_SOURCE_AUDIO);
+            OBSDataArrayAutoRelease applications = obs_data_array_create();
+            std::set<std::string> unique;
+            for (const auto &application : encore::platform_applications()) {
+                if (!unique.insert(application.id).second) continue;
+                OBSDataAutoRelease item = obs_data_create();
+                obs_data_set_string(item, "value", application.id.c_str());
+                obs_data_array_push_back(applications, item);
+            }
+            obs_data_set_array(result, "applications", applications);
+            engine->reply = obs_data_get_json(result);
+            return engine->reply.c_str();
         } else if (action == "applications") {
             OBSDataAutoRelease result = obs_data_create();
             OBSDataArrayAutoRelease items = obs_data_array_create();
@@ -439,7 +549,10 @@ extern "C" const char *ec_request(void *handle, const char *json) {
 
 extern "C" void ec_tick(void *handle) {
     auto *engine = static_cast<Engine *>(handle);
-    try { engine->tick(); } catch (const std::exception &error) { engine->error = error.what(); }
+    try { engine->tick(); } catch (const std::exception &error) {
+        engine->error = error.what();
+        engine->next_poll = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+    }
 }
 
 extern "C" int ec_get_format(void *handle, uint32_t stream, ec_format *format) {

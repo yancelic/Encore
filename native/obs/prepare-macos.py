@@ -5,6 +5,8 @@ No OBS frontend, Qt, CEF browser, updater, or camera plugin is bundled.
 from pathlib import Path
 import hashlib
 import platform
+import os
+import re
 import shutil
 import subprocess
 import sys
@@ -82,13 +84,35 @@ def prepare():
         copy(app / 'Frameworks' / 'libobs.framework', frameworks / 'libobs.framework')
         for renderer in (app / 'Frameworks').glob('libobs-*'):
             copy(renderer, frameworks / renderer.name)
-        for name in ['mac-capture', 'mac-videotoolbox', 'obs-ffmpeg', 'obs-x264']:
+        for name in ['mac-capture', 'mac-videotoolbox', 'obs-ffmpeg', 'obs-x264', 'coreaudio-encoder']:
             plugin = app / 'PlugIns' / f'{name}.plugin'
             if not plugin.exists():
                 raise RuntimeError(f'Required OBS capture plugin missing: {name}')
             copy(plugin, plugins / plugin.name)
     finally:
         subprocess.check_call(['hdiutil', 'detach', str(mount)])
+    # Plugins are loaded by libobs rather than the executable. Each Mach-O image
+    # needs its own relocatable runpath to the staged framework directory.
+    magics = {bytes.fromhex(value) for value in ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']}
+    for path in [*frameworks.rglob('*'), *plugins.rglob('*')]:
+        if not path.is_file() or path.is_symlink():
+            continue
+        with path.open('rb') as file:
+            if file.read(4) not in magics:
+                continue
+        commands = subprocess.check_output(['otool', '-l', str(path)], text=True)
+        for command in commands.split('Load command')[1:]:
+            if 'cmd LC_RPATH' not in command:
+                continue
+            old_path = re.search(r'\bpath (.+) \(offset', command)
+            if old_path:
+                subprocess.check_call(['install_name_tool', '-delete_rpath', old_path.group(1), str(path)])
+        relative = os.path.relpath(frameworks, path.parent)
+        runpath = '@loader_path' if relative == '.' else f'@loader_path/{relative}'
+        subprocess.check_call(['install_name_tool', '-add_rpath', runpath, str(path)])
+        subprocess.check_call(['codesign', '--force', '--sign', '-', str(path)])
+    for bundle in [*frameworks.glob('*.framework'), *plugins.glob('*.plugin')]:
+        subprocess.check_call(['codesign', '--force', '--sign', '-', str(bundle)])
     (runtime / 'COPYING-OBS').write_bytes((source / 'COPYING').read_bytes())
     (runtime / 'SOURCES.txt').write_text(f'OBS Studio 32.0.4: https://github.com/obsproject/obs-studio/tree/{OBS_COMMIT}\nOBS dependencies: {DEPS_URL}\n', encoding='utf-8')
     build = cache / 'build'
