@@ -1,4 +1,3 @@
-import { usePlatform } from '../platform';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ArrowLeft,
@@ -175,7 +174,6 @@ export function EditorView({
   onRevealClip,
   onDeleteClip,
 }: EditorViewProps) {
-  const platform = usePlatform();
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRefs = useRef<(HTMLAudioElement | null)[]>([null, null, null]);
   const videoLaneRef = useRef<HTMLDivElement | null>(null);
@@ -844,9 +842,9 @@ export function EditorView({
 
             <button
               className="btn-primary"
-              disabled={Boolean(busyAction) || platform.os === 'linux'}
+              disabled={Boolean(busyAction)}
               onClick={handleCopy}
-              title={platform.os === 'linux' ? 'Use Save Trim and Show in folder to share clips in this preview' : 'Export selected range with mixed audio and copy MP4 to clipboard'}
+              title="Export selected range with mixed audio and copy MP4 to clipboard"
             >
               {copiedFeedback ? <Check size={14} /> : <ClipboardCopy size={14} />}
               {busyAction === 'share' ? 'Preparing share...' : copiedFeedback ? 'Copied to Clipboard!' : 'Share Clip'}

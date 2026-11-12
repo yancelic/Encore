@@ -844,6 +844,7 @@ dependencies = [
  "encore-clipstore",
  "encore-common",
  "encore-editor",
+ "gtk",
  "rfd",
  "serde",
  "serde_json",

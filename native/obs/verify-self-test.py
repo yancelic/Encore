@@ -12,7 +12,7 @@ def output(*args):
     return subprocess.check_output(args, stderr=subprocess.PIPE)
 
 
-def verify(path):
+def verify(path, silent=False):
     metadata = json.loads(output('ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)))
     videos = [stream for stream in metadata['streams'] if stream['codec_type'] == 'video']
     audios = [stream for stream in metadata['streams'] if stream['codec_type'] == 'audio']
@@ -28,6 +28,9 @@ def verify(path):
     for track, expected in enumerate(frequencies):
         samples = array('f')
         samples.frombytes(output('ffmpeg', '-v', 'error', '-i', str(path), '-map', f'0:a:{track}', '-t', '1', '-ac', '1', '-ar', '48000', '-f', 'f32le', '-'))
+        if silent:
+            assert len(samples) > 40000 and max(abs(value) for value in samples) < 0.001, 'Disabled audio captured unexpected samples'
+            continue
         amplitudes = []
         for frequency in frequencies:
             angle = 2 * math.pi * frequency / 48000
@@ -36,8 +39,8 @@ def verify(path):
             amplitudes.append(2 * math.hypot(real, imaginary) / len(samples))
         assert amplitudes[track] > 0.035, f'{expected} Hz tone missing on track {track}: {amplitudes}'
         assert all(value < amplitudes[track] * 0.1 for index, value in enumerate(amplitudes) if index != track), f'Audio leaked between tracks: {amplitudes}'
-    print(json.dumps({'ok': True, 'video': 'changing H.264 frames', 'audio': 'three isolated AAC tracks', 'durations': durations}))
+    print(json.dumps({'ok': True, 'video': 'changing H.264 frames', 'audio': 'three silent AAC tracks' if silent else 'three isolated AAC tracks', 'durations': durations}))
 
 
 if __name__ == '__main__':
-    verify(Path(sys.argv[1]))
+    verify(Path(sys.argv[1]), '--silent-audio' in sys.argv[2:])

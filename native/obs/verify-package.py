@@ -26,7 +26,7 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         package = next((root / 'target/release/bundle/deb').glob('*.deb'))
         subprocess.check_call(['dpkg-deb', '-x', str(package), str(directory)])
         helper = next(path for path in directory.rglob('encore-recorder') if path.is_file())
-        prefix = ['xvfb-run', '-a']
+        prefix = ['dbus-run-session', '--', 'xvfb-run', '-a', 'bash', str(root / 'native/obs/with-test-desktop.sh')]
         environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
     arguments = [*prefix, str(helper), '--self-test', str(directory / 'self-test')]
     try:
@@ -40,6 +40,7 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         str(directory / 'self-test/encore-self-test.mp4')])
     query = subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],
         cwd=directory, env=environment, text=True)
+    print('\n'.join(line for line in query.splitlines() if not line.startswith('ENCORE_QUERY ')))
     diagnostics = json.loads(next(line.removeprefix('ENCORE_QUERY ') for line in query.splitlines()
         if line.startswith('ENCORE_QUERY ')))
     registered = {source['id'] for source in diagnostics['sources']}

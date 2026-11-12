@@ -485,9 +485,9 @@ pub fn main() {
             Some(action @ ("applications" | "audio_applications" | "audio_devices" | "diagnostics")) => query(action),
             _ => Err("Usage: encore-recorder --query applications|audio_applications|audio_devices|diagnostics".into()),
         }
-    } else if arguments.get(1).map(String::as_str) == Some("--self-test") {
+    } else if matches!(arguments.get(1).map(String::as_str), Some("--self-test" | "--capture-self-test")) {
         match arguments.get(2) {
-            Some(directory) => self_test(PathBuf::from(directory)),
+            Some(directory) => self_test(PathBuf::from(directory), arguments[1] == "--capture-self-test"),
             None => Err("Usage: encore-recorder --self-test OUTPUT_DIRECTORY".into()),
         }
     } else {
@@ -531,7 +531,7 @@ fn background_permission(enabled: bool) -> Result<(), String> {
 
 /// Exercise real GPU rendering, H.264/AAC encoders, RAM replay and muxing without
 /// capturing the screen, microphone, or user applications.
-fn self_test(directory: PathBuf) -> Result<(), String> {
+fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
     std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
     let directory = std::fs::canonicalize(directory).map_err(|e| e.to_string())?;
     let runtime =
@@ -547,15 +547,23 @@ fn self_test(directory: PathBuf) -> Result<(), String> {
         8 * 1024 * 1024,
     )));
     let mut engine = ffi::Engine::open(api.clone(), &runtime, replay.clone())?;
-    let config = Config {
+    let mut config = Config {
         fps: 30,
         height: 360,
         buffer_secs: 3,
         clips_dir: directory.clone(),
         ..Config::default()
     };
+    if desktop_window {
+        config.games = vec!["encore-capture-fixture".into()];
+        config.audio_device = Some("off".into());
+        config.chat_device = Some("off".into());
+        config.mic_device = Some("off".into());
+    }
     let mut request = configuration(&config)?;
-    request["config"]["diagnostic_source"] = json!(true);
+    request["config"]["diagnostic_source"] = json!(!desktop_window);
+    request["config"]["diagnostic_no_shortcut"] = json!(true);
+    request["config"]["diagnostic_no_tray"] = json!(true);
     request["config"]["state_dir"] = json!(directory);
     let answer = engine.request(&request)?;
     if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) {

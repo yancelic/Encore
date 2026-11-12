@@ -115,7 +115,7 @@ jobs:
       - name: Install native development dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev libayatana-appindicator3-dev libpipewire-0.3-dev libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev xvfb
+          sudo apt-get install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev libayatana-appindicator3-dev libpipewire-0.3-dev libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev xvfb openbox x11-utils dbus-x11
       - name: Compile capture and mux bridge
         run: |
           python3 native/obs/prepare-linux.py
@@ -140,6 +140,11 @@ jobs:
           npm --prefix apps/ui ci
           npm --prefix apps/ui run build:preview
           python3 native/obs/verify-package.py
+      - name: Record an actual controlled X11 window
+        env:
+          ENCORE_NATIVE_RUNTIME: ${{ github.workspace }}/tools/obs-runtime
+          LIBGL_ALWAYS_SOFTWARE: '1'
+        run: dbus-run-session -- xvfb-run -a bash native/obs/with-test-desktop.sh bash native/obs/test-window-capture.sh
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -148,6 +153,7 @@ jobs:
             tools/obs-runtime/lib/libencore_capture.so
             target/native-self-test/*
             target/release/bundle/deb/*.deb
+            target/native-window-self-test/*
           retention-days: 14
 
   native:
@@ -177,7 +183,7 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libxdo-dev ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libxdo-dev ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad xvfb
       - name: Prepare Apple Silicon FFmpeg
         if: runner.os == 'macOS'
         run: |
@@ -204,6 +210,9 @@ jobs:
         run: cargo test --locked -p encore-common -p encore-encode -p encore-clipstore -p encore-editor
       - name: Test library backend
         run: cargo test --locked -p encore-ui --lib
+      - name: Verify native Linux file clipboard formats
+        if: runner.os == 'Linux'
+        run: xvfb-run -a cargo test --locked -p encore-ui --lib linux_clipboard_exchanges_file_mime_types -- --ignored --test-threads=1
       - name: Build development packages
         if: github.event_name == 'workflow_dispatch' && inputs.build_previews && runner.os != 'Windows'
         run: npm --prefix apps/ui run build:preview

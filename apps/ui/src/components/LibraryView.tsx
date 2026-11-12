@@ -130,9 +130,9 @@ export function LibraryView({
     <div className="clip-actions">
       <button
         className={`btn-chip ${copiedId === clip.id ? 'copied' : ''}`}
-        disabled={copyingId !== null || platform.os === 'linux'}
+        disabled={copyingId !== null}
         onClick={() => copyClip(clip)}
-        title={platform.os === 'linux' ? 'Use Show in folder to share clips in this preview' : 'Copy clip file to clipboard'}
+        title="Copy clip file to clipboard"
       >
         {copiedId === clip.id ? (
           <Check size={14} />

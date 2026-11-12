@@ -1,7 +1,7 @@
 {
   "app-id": "com.encore.clipper",
   "runtime": "org.gnome.Platform",
-  "runtime-version": "49",
+  "runtime-version": "51",
   "sdk": "org.gnome.Sdk",
   "command": "encore-ui",
   "default-branch": "dev",

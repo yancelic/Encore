@@ -1,6 +1,9 @@
 //! Tauri backend exposing Encore recorder IPC, config/autostart, clip library, waveforms, and editor commands.
 mod tray;
 mod lifecycle;
+#[cfg(target_os = "linux")]
+#[path = "platform/linux_clipboard.rs"]
+mod linux_clipboard;
 #[cfg(windows)]
 #[path = "platform/windows/updater.rs"]
 mod updater;
@@ -528,6 +531,7 @@ async fn build_montage_cmd(
 
 #[tauri::command]
 async fn copy_clip_to_clipboard(
+    app: AppHandle,
     state: State<'_, AppState>,
     id: String,
     start_secs: Option<f64>,
@@ -555,13 +559,25 @@ async fn copy_clip_to_clipboard(
                 muted_tracks: &muted,
                 track_volumes: &volumes,
             },
-        ).and_then(|path| copy_file_to_clipboard(&path));
+        ).and_then(|path| copy_shared_file(&app, &path));
         if result.is_err() {
             let _ = std::fs::remove_file(&dst);
             let _ = std::fs::remove_dir(&dir);
         }
         result
     }).await
+}
+
+fn copy_shared_file(app: &AppHandle, path: &Path) -> Result<(), String> {
+    #[cfg(not(target_os = "linux"))]
+    { let _ = app; copy_file_to_clipboard(path) }
+    #[cfg(target_os = "linux")]
+    {
+        let prepared = linux_clipboard::Prepared::new(path)?;
+        let (sender, receiver) = std::sync::mpsc::sync_channel(1);
+        app.run_on_main_thread(move || { let _ = sender.send(prepared.copy()); }).map_err(|e| e.to_string())?;
+        receiver.recv_timeout(std::time::Duration::from_secs(15)).map_err(|_| "Desktop clipboard did not respond".to_string())?
+    }
 }
 
 #[tauri::command]

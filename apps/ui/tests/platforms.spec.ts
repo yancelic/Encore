@@ -16,7 +16,7 @@ for (const platform of ['macos', 'linux'] as const) {
     await page.getByRole('button', { name: 'Save Trim', exact: true }).click();
     await expect.poll(() => calls(page, 'trim_clip_cmd')).toHaveLength(1);
     expect((await calls(page, 'trim_clip_cmd'))[0].args.mutedTracks).toEqual([true, false, false]);
-    if (platform === 'linux') await expect(page.getByRole('button', { name: 'Share Clip', exact: true })).toBeDisabled();
+    if (platform === 'linux') await expect(page.getByRole('button', { name: 'Share Clip', exact: true })).toBeEnabled();
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
     await expect(page.getByText('Recording is not available in this preview yet.', { exact: false })).toBeVisible();
     await expect(page.getByLabel('Clips folder', { exact: true })).toBeVisible();

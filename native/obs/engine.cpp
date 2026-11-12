@@ -247,9 +247,9 @@ struct Engine {
         config = obs_data_create(); obs_data_apply(config, settings);
         fps = static_cast<uint32_t>(std::clamp<int64_t>(obs_data_get_int(config, "fps"), 1, 240));
         reset_video(1920, 1080);
-        if (!obs_data_get_bool(config, "diagnostic_source")) configure_hotkey();
+        if (!obs_data_get_bool(config, "diagnostic_source") && !obs_data_get_bool(config, "diagnostic_no_shortcut")) configure_hotkey();
         configured = true;
-        if (!obs_data_get_bool(config, "diagnostic_source")) encore::platform_set_tray(tray_visible, false);
+        if (!obs_data_get_bool(config, "diagnostic_source") && !obs_data_get_bool(config, "diagnostic_no_tray")) encore::platform_set_tray(tray_visible, false);
         error.clear();
         next_poll = {};
     }
@@ -407,7 +407,7 @@ struct Engine {
         obs_data_set_bool(data, "open_library", action == "library");
         obs_data_set_bool(data, "open_folder", action == "folder");
         obs_data_set_bool(data, "quit_requested", action == "quit");
-        if (configured && !obs_data_get_bool(config, "diagnostic_source"))
+        if (configured && !obs_data_get_bool(config, "diagnostic_source") && !obs_data_get_bool(config, "diagnostic_no_tray"))
             encore::platform_set_tray(tray_visible, output && obs_output_active(output));
         obs_data_set_bool(data, "recording", output && obs_output_active(output));
         obs_data_set_bool(data, "save_requested", save_requested.exchange(false));
