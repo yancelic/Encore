@@ -104,6 +104,7 @@ struct Engine {
         std::string graphics = encore::platform_graphics_module();
         if (!runtime.empty()) {
             auto candidate = fs::path(runtime) / "lib" / graphics;
+            if (!fs::exists(candidate)) candidate = fs::path(runtime) / "Contents/Frameworks" / graphics;
             if (fs::exists(candidate)) graphics = candidate.string();
         }
         info.graphics_module = graphics.c_str();
@@ -351,6 +352,10 @@ void output_packet(void *data, encoder_packet *packet) {
 }
 
 void load_modules(const fs::path &runtime) {
+    // Frontend tools require Qt widgets and must never enter the background recorder.
+    const char *safe_modules[] = {"mac-capture", "mac-videotoolbox", "linux-capture", "linux-pipewire",
+        "linux-pulseaudio", "linux-pipewire-audio", "obs-ffmpeg", "obs-x264", "obs-nvenc", "obs-qsv11"};
+    for (auto *name : safe_modules) obs_add_safe_module(name);
     if (!runtime.empty()) {
         obs_add_data_path((runtime / "share/obs/libobs").c_str());
         obs_add_module_path((runtime / "lib/obs-plugins/%module%.so").c_str(), (runtime / "share/obs/obs-plugins/%module%").c_str());
@@ -380,6 +385,9 @@ extern "C" void *ec_create(const char *runtime, ec_packet_callback packet, void 
         engine->core_started = true;
         obs_audio_info audio{48000, SPEAKERS_STEREO};
         if (!obs_reset_audio(&audio)) throw std::runtime_error("Could not initialize 48 kHz audio");
+        engine->config = obs_data_create();
+        obs_data_set_int(engine->config, "height", 1080);
+        engine->reset_video(1920, 1080);
         obs_output_info info{};
         info.id = "encore_packets"; info.get_name = output_name;
         info.flags = OBS_OUTPUT_AV | OBS_OUTPUT_ENCODED | OBS_OUTPUT_MULTI_TRACK_AUDIO;
