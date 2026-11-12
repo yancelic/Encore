@@ -82,8 +82,10 @@ def prepare():
         if not app.is_dir():
             raise RuntimeError('OBS.app was not found in the verified disk image')
         copy(app / 'Frameworks' / 'libobs.framework', frameworks / 'libobs.framework')
-        for renderer in (app / 'Frameworks').glob('libobs-*'):
-            copy(renderer, frameworks / renderer.name)
+        for name in ['libobs-opengl.dylib', 'libobs-metal.dylib']:
+            renderer = app / 'Frameworks' / name
+            if renderer.exists():
+                copy(renderer.resolve(), frameworks / name)
         for name in ['mac-capture', 'mac-videotoolbox', 'obs-ffmpeg', 'obs-x264', 'coreaudio-encoder']:
             plugin = app / 'PlugIns' / f'{name}.plugin'
             if not plugin.exists():

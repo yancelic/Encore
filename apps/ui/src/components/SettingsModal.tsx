@@ -31,7 +31,7 @@ interface SettingsModalProps {
 const PRESET_BUFFER_SECS = [15, 20, 30, 45, 60, 90, 120];
 const FPS_OPTIONS = [30, 60, 120, 144, 240];
 const HEIGHT_OPTIONS: { label: string; value: number }[] = [
-  { label: 'Native (Display Resolution)', value: 0 },
+  { label: 'Native (Window Resolution)', value: 0 },
   { label: '1440p (QHD)', value: 1440 },
   { label: '1080p (Full HD)', value: 1080 },
   { label: '720p (HD)', value: 720 },
@@ -147,6 +147,7 @@ function formatKeyCombo(e: KeyboardEvent): string | null {
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
   if (e.shiftKey) parts.push('Shift');
+  if (e.metaKey) parts.push('Super');
   parts.push(key);
   return parts.join('+');
 }
@@ -174,6 +175,7 @@ export function SettingsModal({
   const [applicationsError, setApplicationsError] = useState(false);
   const [recordingKey, setRecordingKey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
     if (!platform.recording) return;
@@ -345,9 +347,10 @@ export function SettingsModal({
                     : 'Records the focused window. Switching apps changes the recording target.'}
                 </p>
                 {platform.portal_capture && <button type="button" className="btn-secondary"
-                  onClick={() => { void selectCaptureSource().catch((error: unknown) => setHotkeyError(String(error))); }}>
+                  onClick={() => { setCaptureError(null); void selectCaptureSource().catch((error: unknown) => setCaptureError(String(error))); }}>
                   Choose recording window…
                 </button>}
+                {captureError && <p className="audio-routing-note" role="alert">{captureError}</p>}
               </div>
 
               <div className="field-group">
@@ -526,6 +529,13 @@ export function SettingsModal({
                     <option value="game">Recorded application</option>
                     <option value="off">Off (Disabled)</option>
                   </select>
+                  {platform.portal_capture && draft.game_audio_enabled && <>
+                    <label htmlFor="game-audio-application">Game audio application</label>
+                    <input id="game-audio-application" list="audio-applications" placeholder="Choose the game's audio application"
+                      value={draft.game_application ?? ''}
+                      onChange={(event) => setDraft((value) => ({ ...value, game_application: event.target.value || null }))} />
+                    <p className="audio-routing-note">Play audio in your game, then refresh applications. The system window dialog does not identify its audio stream.</p>
+                  </>}
                 </div>
                 <div className="field-group">
                   <label htmlFor="chat-application">Chat application</label>
@@ -639,7 +649,7 @@ export function SettingsModal({
             </div>
           </section>
 
-          {platform.recording && <section className="settings-section">
+          {platform.recording && !platform.portal_capture && <section className="settings-section">
             <h3>Games to capture ({draft.games.length})</h3>
             <div className="games-chips">
               {draft.games.map((g) => (

@@ -391,7 +391,8 @@ fn run() -> Result<(), String> {
                     status.height = config.height;
                     status.buffer_secs = config.buffer_secs;
                     status.hotkey = config.hotkey.clone();
-                    let error = native["error"].as_str().unwrap_or_default();
+                    let mut error = native["error"].as_str().unwrap_or_default();
+                    if error.is_empty() { error = native["hotkey_warning"].as_str().unwrap_or_default(); }
                     if error != previous_engine_error {
                         status.error = if error.is_empty() {
                             None
@@ -450,7 +451,13 @@ fn open_library() -> Result<(), String> {
 
 pub fn main() {
     let arguments: Vec<_> = std::env::args().collect();
-    let result = if arguments.get(1).map(String::as_str) == Some("--query") {
+    let result = if arguments.get(1).map(String::as_str) == Some("--save") {
+        match ipc::send_request(&IpcRequest::SaveClip) {
+            Ok(IpcResponse::Ok) => Ok(()),
+            Ok(IpcResponse::Err(error)) | Err(error) => Err(error),
+            _ => Err("Unexpected recorder response".into()),
+        }
+    } else if arguments.get(1).map(String::as_str) == Some("--query") {
         match arguments.get(2).map(String::as_str) {
             Some(action @ ("applications" | "audio_applications" | "audio_devices" | "diagnostics")) => query(action),
             _ => Err("Usage: encore-recorder --query applications|audio_applications|audio_devices|diagnostics".into()),

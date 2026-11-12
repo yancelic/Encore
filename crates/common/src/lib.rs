@@ -52,6 +52,8 @@ pub struct Config {
     pub audio_mode: AudioMode,
     /// In application mode, capture the selected game's process tree.
     pub game_audio_enabled: bool,
+    /// Wayland's window portal does not reveal the owning application. Select its audio explicitly.
+    pub game_application: Option<String>,
     /// Executable filename, never a window title or persisted PID. None = chat off.
     pub chat_application: Option<String>,
     /// Track 0 (Game): substring of output device name (`None` = default device, `"off"` = silent).
@@ -79,6 +81,7 @@ impl Default for Config {
             hotkey: "Alt+S".into(),
             audio_mode: AudioMode::Devices,
             game_audio_enabled: true,
+            game_application: None,
             chat_application: None,
             audio_device: None,
             chat_device: None,
@@ -132,6 +135,10 @@ impl Config {
             }
             if self.chat_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
                 return Err("Select a chat executable filename such as Chat.exe, not a window title or file path.".into());
+            }
+            #[cfg(unix)]
+            if self.game_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
+                return Err("Choose the game's audio application identifier, without a file path.".into());
             }
         }
         Ok(())

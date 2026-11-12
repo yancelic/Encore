@@ -75,6 +75,12 @@ bool platform_microphone_ready(std::string &warning) {
     } else warning = "Microphone permission is disabled. Enable Encore Recorder in System Settings > Privacy & Security > Microphone.";
     return false;
 }
+void platform_configure_hotkey(const std::string &) {
+    if (!CGPreflightListenEventAccess()) CGRequestListenEventAccess();
+}
+std::string platform_hotkey_warning() {
+    return CGPreflightListenEventAccess() ? "" : "Allow Encore Recorder in System Settings > Privacy & Security > Input Monitoring to save replays while another app is focused.";
+}
 bool platform_is_wayland() { return false; }
 const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
 const char *platform_video_source() { return "screen_capture"; }
@@ -113,6 +119,12 @@ void platform_video_settings(obs_data_t *settings, const Application &applicatio
     obs_data_set_int(settings, "window", application.window);
     obs_data_set_string(settings, "application", application.id.c_str());
     obs_data_set_bool(settings, "show_cursor", true);
+}
+
+std::vector<std::string> platform_audio_applications() {
+    std::vector<std::string> result;
+    for (const auto &application : platform_applications()) result.push_back(application.id);
+    return result;
 }
 
 const char *platform_audio_source(bool microphone, bool) {

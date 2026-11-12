@@ -1,8 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 #include "platform.hpp"
+#include "wayland-shortcuts.hpp"
 #include <obs-nix-platform.h>
 #include <gtk/gtk.h>
 #include <libayatana-appindicator/app-indicator.h>
+#include <pipewire/pipewire.h>
 #include <gdk/gdkx.h>
 #include <gdk/gdkwayland.h>
 #include <X11/Xlib.h>
@@ -14,6 +16,7 @@
 #include <fstream>
 #include <string>
 #include <vector>
+#include <chrono>
 
 namespace encore {
 namespace {
@@ -77,7 +80,7 @@ void platform_pump() {
     for (unsigned i = 0; i < 32 && g_main_context_pending(nullptr); ++i)
         g_main_context_iteration(nullptr, false);
 }
-void platform_shutdown() { platform_set_tray(false, false); xdisplay = nullptr; }
+void platform_shutdown() { wayland_shortcuts_shutdown(); platform_set_tray(false, false); xdisplay = nullptr; }
 void platform_set_tray(bool visible, bool recording) {
     if (!visible) {
         if (indicator) { app_indicator_set_status(indicator, APP_INDICATOR_STATUS_PASSIVE); g_object_unref(indicator); indicator = nullptr; }
@@ -105,8 +108,13 @@ void platform_set_tray(bool visible, bool recording) {
     }
     gtk_menu_item_set_label(GTK_MENU_ITEM(tray_status), recording ? "Encore — recording" : "Encore — waiting for a game");
 }
-std::string platform_tray_action() { auto action = tray_action; tray_action.clear(); return action; }
+std::string platform_tray_action() {
+    if (wayland_shortcuts_pressed()) return "save";
+    auto action = tray_action; tray_action.clear(); return action;
+}
 bool platform_microphone_ready(std::string &) { return true; }
+void platform_configure_hotkey(const std::string &trigger) { if (wayland) wayland_shortcuts_configure(trigger); }
+std::string platform_hotkey_warning() { return wayland ? wayland_shortcuts_warning() : ""; }
 bool platform_is_wayland() { return wayland; }
 const char *platform_graphics_module() { return "libobs-opengl.so"; }
 const char *platform_video_source() { return wayland ? "pipewire-window-capture-source" : "xcomposite_input"; }
@@ -148,6 +156,44 @@ void platform_video_settings(obs_data_t *settings, const Application &applicatio
     obs_data_set_string(settings, "capture_window", key.c_str());
     obs_data_set_bool(settings, "show_cursor", true);
     obs_data_set_bool(settings, "include_border", false);
+}
+
+std::vector<std::string> platform_audio_applications() {
+    struct Query { std::vector<std::string> applications; bool done = false; int sequence = 0; } query;
+    pw_init(nullptr, nullptr);
+    auto *loop = pw_main_loop_new(nullptr);
+    if (!loop) return {};
+    auto *context = pw_context_new(pw_main_loop_get_loop(loop), nullptr, 0);
+    auto *core = context ? pw_context_connect(context, nullptr, 0) : nullptr;
+    if (core) {
+        spa_hook core_listener{}, registry_listener{};
+        pw_core_events core_events{}; core_events.version = PW_VERSION_CORE_EVENTS;
+        core_events.done = +[](void *data, uint32_t id, int sequence) {
+            auto *query = static_cast<Query *>(data);
+            if (id == PW_ID_CORE && sequence == query->sequence) query->done = true;
+        };
+        pw_core_add_listener(core, &core_listener, &core_events, &query);
+        auto *registry = pw_core_get_registry(core, PW_VERSION_REGISTRY, 0);
+        pw_registry_events events{}; events.version = PW_VERSION_REGISTRY_EVENTS;
+        events.global = +[](void *data, uint32_t, uint32_t, const char *type, uint32_t, const spa_dict *properties) {
+            if (std::string(type) != PW_TYPE_INTERFACE_Node || !properties) return;
+            const char *media_class = spa_dict_lookup(properties, PW_KEY_MEDIA_CLASS);
+            const char *binary = spa_dict_lookup(properties, PW_KEY_APP_PROCESS_BINARY);
+            if (media_class && std::string(media_class) == "Stream/Output/Audio" && binary && *binary)
+                static_cast<Query *>(data)->applications.emplace_back(binary);
+        };
+        pw_registry_add_listener(registry, &registry_listener, &events, &query);
+        query.sequence = pw_core_sync(core, PW_ID_CORE, 0);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(500);
+        while (!query.done && std::chrono::steady_clock::now() < deadline)
+            pw_loop_iterate(pw_main_loop_get_loop(loop), 20);
+        spa_hook_remove(&registry_listener); spa_hook_remove(&core_listener);
+        pw_proxy_destroy(reinterpret_cast<pw_proxy *>(registry));
+        pw_core_disconnect(core);
+    }
+    if (context) pw_context_destroy(context);
+    pw_main_loop_destroy(loop);
+    return query.applications;
 }
 
 const char *platform_audio_source(bool microphone, bool application) {

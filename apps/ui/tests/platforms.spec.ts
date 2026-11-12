@@ -35,3 +35,46 @@ test('Linux first run explains how to open existing clips', async ({ page }) => 
   await mockDesktop(page, { platform: 'linux', empty: true });
   await expect(page.getByText('Choose your clips folder in Settings, then add MP4 files to browse and edit them here.')).toBeVisible();
 });
+
+test('native macOS settings preserve application identifiers and Command shortcuts', async ({ page }) => {
+  const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true,
+    captureApplications: [{ exe: 'com.example.game', title: 'My Mac Game' }],
+    audioApplications: ['com.example.game', 'com.hnc.Discord'] });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Choose running application', exact: true }).click();
+  await page.getByRole('button', { name: 'Add My Mac Game', exact: true }).click();
+  await page.getByLabel('Separate audio by', { exact: true }).selectOption('Applications');
+  await page.getByLabel('Chat application', { exact: true }).fill('com.hnc.Discord');
+  await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeEnabled();
+  await expect(page.getByLabel('Start recorder at login', { exact: true })).toBeVisible();
+  await page.getByLabel('Save shortcut', { exact: true }).click();
+  await page.keyboard.press('Meta+Shift+S');
+  await expect(page.getByLabel('Save shortcut', { exact: true })).toContainText('Shift+Super+S');
+  await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+  const saved = (await calls(page, 'save_config'))[0].args.cfg;
+  expect(saved.games).toContain('com.example.game');
+  expect(saved.chat_application).toBe('com.hnc.Discord');
+  expect(saved.hotkey).toBe('Shift+Super+S');
+  expect(await calls(page, 'check_for_updates')).toHaveLength(0);
+  expect(errors).toEqual([]);
+});
+
+test('Wayland uses the system window picker and explicit application audio', async ({ page }) => {
+  const errors = await mockDesktop(page, { platform: 'linux', nativeRecording: true, wayland: true,
+    audioApplications: ['game', 'Discord'] });
+  await expect(page.getByRole('group', { name: 'Capture Mode' }).getByRole('button', { name: 'Window', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByRole('option', { name: 'Active Window (Follows Focus)', exact: true })).toBeDisabled();
+  await page.getByRole('button', { name: 'Choose recording window…', exact: true }).click();
+  await expect.poll(() => calls(page, 'select_capture_source')).toHaveLength(1);
+  await page.getByLabel('Separate audio by', { exact: true }).selectOption('Applications');
+  await page.getByLabel('Game audio application', { exact: true }).fill('game');
+  await page.getByLabel('Chat application', { exact: true }).fill('Discord');
+  await expect(page.getByRole('button', { name: 'Choose running application', exact: true })).toHaveCount(0);
+  await page.getByRole('button', { name: 'Save settings', exact: true }).click();
+  const saved = (await calls(page, 'save_config'))[0].args.cfg;
+  expect(saved.game_application).toBe('game');
+  expect(saved.chat_application).toBe('Discord');
+  expect(saved.mode).toBe('GameDetection');
+  expect(errors).toEqual([]);
+});

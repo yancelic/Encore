@@ -121,12 +121,12 @@ export function TopBar({
             aria-pressed={mode === 'GameDetection'}
             onClick={() => mode !== 'GameDetection' && onChangeMode('GameDetection')}
             disabled={busyAction === 'mode'}
-            title="Automatically record supported games"
+            title={platform.portal_capture ? 'Record the window selected in the system sharing dialog' : 'Automatically record supported games'}
           >
             <Gamepad2 size={13} />
-            Games
+            {platform.portal_capture ? 'Selected window' : 'Games'}
           </button>
-          <button
+          {!platform.portal_capture && <button
             className={mode === 'ActiveWindow' ? 'active' : ''}
             aria-pressed={mode === 'ActiveWindow'}
             onClick={() => mode !== 'ActiveWindow' && onChangeMode('ActiveWindow')}
@@ -135,7 +135,7 @@ export function TopBar({
           >
             <Monitor size={13} />
             Window
-          </button>
+          </button>}
         </div>}
       </div>
 

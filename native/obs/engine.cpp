@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cctype>
 #include <cstdio>
 #include <filesystem>
 #include <memory>
@@ -194,6 +195,8 @@ struct Engine {
     }
 
     void configure_hotkey() {
+        encore::platform_configure_hotkey(obs_data_get_string(config, "hotkey"));
+        if (encore::platform_is_wayland()) return; // The compositor owns global shortcuts on Wayland.
         if (hotkey == OBS_INVALID_HOTKEY_ID) hotkey = obs_hotkey_register_frontend(
             "Encore.Save", "Save Encore replay", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
                 if (pressed) static_cast<Engine *>(data)->save_requested.store(true);
@@ -203,12 +206,29 @@ struct Engine {
         size_t offset = 0;
         while (true) {
             auto end = text.find('+', offset);
-            const auto part = text.substr(offset, end == std::string::npos ? end : end - offset);
-            if (part == "Ctrl" || part == "Control") combination.modifiers |= INTERACT_CONTROL_KEY;
-            else if (part == "Alt") combination.modifiers |= INTERACT_ALT_KEY;
-            else if (part == "Shift") combination.modifiers |= INTERACT_SHIFT_KEY;
-            else if (part == "Super" || part == "Command" || part == "Meta") combination.modifiers |= INTERACT_COMMAND_KEY;
-            else combination.key = obs_key_from_name(("OBS_KEY_" + part).c_str());
+            auto part = text.substr(offset, end == std::string::npos ? end : end - offset);
+            std::transform(part.begin(), part.end(), part.begin(), [](unsigned char value) { return std::toupper(value); });
+            if (part == "CTRL" || part == "CONTROL") combination.modifiers |= INTERACT_CONTROL_KEY;
+            else if (part == "ALT" || part == "OPTION") combination.modifiers |= INTERACT_ALT_KEY;
+            else if (part == "SHIFT") combination.modifiers |= INTERACT_SHIFT_KEY;
+            else if (part == "SUPER" || part == "COMMAND" || part == "META" || part == "CMD") combination.modifiers |= INTERACT_COMMAND_KEY;
+            else {
+                if (part.size() == 4 && part.substr(0, 3) == "KEY") part = part.substr(3);
+                if (part.size() == 6 && part.substr(0, 5) == "DIGIT") part = part.substr(5);
+                const std::pair<const char *, const char *> aliases[] = {
+                    {"BACKQUOTE", "QUOTELEFT"}, {"QUOTE", "APOSTROPHE"}, {"ENTER", "RETURN"},
+                    {"ARROWLEFT", "LEFT"}, {"ARROWRIGHT", "RIGHT"}, {"ARROWUP", "UP"}, {"ARROWDOWN", "DOWN"},
+                    {"PRINTSCREEN", "PRINT"}, {"INTLBACKSLASH", "LESS"},
+                    {"NUMPADADD", "NUMPLUS"}, {"NUMPADSUBTRACT", "NUMMINUS"}, {"NUMPADMULTIPLY", "NUMASTERISK"},
+                    {"NUMPADDIVIDE", "NUMSLASH"}, {"NUMPADDECIMAL", "NUMPERIOD"}, {"NUMPADENTER", "ENTER"},
+                    {"NUMPADEQUAL", "NUMEQUAL"}, {"NUMPADCOMMA", "NUMCOMMA"},
+                    {"AUDIOVOLUMEDOWN", "VOLUMEDOWN"}, {"AUDIOVOLUMEUP", "VOLUMEUP"}, {"AUDIOVOLUMEMUTE", "VOLUMEMUTE"},
+                    {"MEDIAPLAYPAUSE", "MEDIATOGGLEPLAYPAUSE"}, {"MEDIATRACKNEXT", "MEDIANEXT"}, {"MEDIATRACKPREVIOUS", "MEDIAPREVIOUS"}
+                };
+                if (part.size() == 7 && part.substr(0, 6) == "NUMPAD") part = "NUM" + part.substr(6);
+                else for (const auto &alias : aliases) if (part == alias.first) { part = alias.second; break; }
+                combination.key = obs_key_from_name(("OBS_KEY_" + part).c_str());
+            }
             if (end == std::string::npos) break;
             offset = end + 1;
         }
@@ -223,7 +243,7 @@ struct Engine {
         config = obs_data_create(); obs_data_apply(config, settings);
         fps = static_cast<uint32_t>(std::clamp<int64_t>(obs_data_get_int(config, "fps"), 1, 240));
         reset_video(1920, 1080);
-        configure_hotkey();
+        if (!obs_data_get_bool(config, "diagnostic_source")) configure_hotkey();
         configured = true;
         if (!obs_data_get_bool(config, "diagnostic_source")) encore::platform_set_tray(tray_visible, false);
         error.clear();
@@ -291,7 +311,11 @@ struct Engine {
         }
         const bool app_audio = std::string(obs_data_get_string(config, "audio_mode")) == "Applications";
         if (app_audio) {
-            if (obs_data_get_bool(config, "game_audio_enabled")) create_audio(0, target.id, true);
+            const std::string game = encore::platform_is_wayland() ? obs_data_get_string(config, "game_application") : target.id;
+            if (obs_data_get_bool(config, "game_audio_enabled")) {
+                if (game.empty()) warnings[0] = "Choose the game's audio application in Settings; Wayland does not expose the selected window's application identity.";
+                else create_audio(0, game, true);
+            }
             create_audio(1, obs_data_get_string(config, "chat_application"), true);
         } else {
             std::string game = obs_data_get_string(config, "audio_device");
@@ -367,6 +391,8 @@ struct Engine {
         obs_data_set_int(data, "epoch", static_cast<long long>(epoch));
         obs_data_set_string(data, "target", target.id.c_str());
         obs_data_set_string(data, "error", error.c_str());
+        const auto hotkey_warning = configured && !obs_data_get_bool(config, "diagnostic_source") ? encore::platform_hotkey_warning() : "";
+        obs_data_set_string(data, "hotkey_warning", hotkey_warning.c_str());
         obs_data_set_string(data, "encoder", encoder_name.c_str());
         for (unsigned i = 0; i < 3; ++i) obs_data_set_string(data, ("audio_warning_" + std::to_string(i)).c_str(), warnings[i].c_str());
         return data;
@@ -534,10 +560,10 @@ extern "C" const char *ec_request(void *handle, const char *json) {
             obs_data_set_bool(result, "supported", obs_get_source_output_flags(source) & OBS_SOURCE_AUDIO);
             OBSDataArrayAutoRelease applications = obs_data_array_create();
             std::set<std::string> unique;
-            for (const auto &application : encore::platform_applications()) {
-                if (!unique.insert(application.id).second) continue;
+            for (const auto &application : encore::platform_audio_applications()) {
+                if (!unique.insert(application).second) continue;
                 OBSDataAutoRelease item = obs_data_create();
-                obs_data_set_string(item, "value", application.id.c_str());
+                obs_data_set_string(item, "value", application.c_str());
                 obs_data_array_push_back(applications, item);
             }
             obs_data_set_array(result, "applications", applications);

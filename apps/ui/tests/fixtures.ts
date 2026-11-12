@@ -61,7 +61,7 @@ declare global {
 /** The bridge only exists inside the test browser. Nothing is added to app code. */
 export async function mockDesktop(
   page: Page,
-  options: { platform?: 'windows' | 'macos' | 'linux'; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
+  options: { platform?: 'windows' | 'macos' | 'linux'; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
     shareError?: boolean; shareDelay?: number } = {},
 ) {
@@ -125,7 +125,8 @@ export async function mockDesktop(
               return;
             case 'get_platform_capabilities': {
               const os = options.platform ?? 'windows';
-              return { os, recording: os === 'windows', application_audio: os === 'windows', autostart: os === 'windows', updates: os === 'windows' };
+              const recording = os === 'windows' || !!options.nativeRecording;
+              return { os, recording, application_audio: recording, autostart: recording, updates: os === 'windows', portal_capture: !!options.wayland };
             }
             case 'get_config':
               return cfg;
@@ -157,7 +158,8 @@ export async function mockDesktop(
                 { name: 'USB microphone', kind: 'Input', is_default: true },
               ];
             case 'list_audio_applications':
-              return { supported: true, executables: ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
+              return { supported: true, executables: options.audioApplications ?? ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
+            case 'select_capture_source': return;
             case 'list_capture_applications':
               if (options.captureApplicationsError) throw new Error('Window enumeration failed');
               return options.captureApplications ?? [
