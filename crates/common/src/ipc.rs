@@ -6,7 +6,7 @@ use crate::CaptureMode;
 #[path = "platform/windows/ipc.rs"]
 mod transport;
 #[cfg(not(windows))]
-#[path = "platform/portable/ipc.rs"]
+#[path = "platform/unix_ipc.rs"]
 mod transport;
 pub use transport::*;
 

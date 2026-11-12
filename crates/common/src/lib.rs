@@ -16,7 +16,6 @@ pub mod platform;
 pub mod tray_icon;
 
 use global_hotkey::hotkey::HotKey;
-#[cfg(windows)]
 use global_hotkey::hotkey::Code;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -188,8 +187,7 @@ pub fn ffmpeg_path() -> PathBuf {
     platform::ffmpeg_path()
 }
 
-#[cfg(windows)]
-fn is_windows_supported_key(code: Code) -> bool {
+fn is_supported_key(code: Code) -> bool {
     matches!(
         code,
         Code::KeyA
@@ -343,8 +341,7 @@ pub fn parse_hotkey(s: &str) -> Result<HotKey, String> {
     let hk = HotKey::from_str(trimmed).map_err(|_| {
         format!("Invalid hotkey '{trimmed}'. Please pick a valid key combination in Settings.")
     })?;
-    #[cfg(windows)]
-    if !is_windows_supported_key(hk.key) {
+    if !is_supported_key(hk.key) {
         return Err(format!(
             "Unsupported hotkey key '{}' in '{trimmed}'. Please pick another hotkey in Settings.",
             hk.key

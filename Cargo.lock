@@ -801,6 +801,7 @@ version = "0.5.0"
 dependencies = [
  "dirs",
  "global-hotkey",
+ "libc",
  "serde",
  "serde_json",
  "wasapi",

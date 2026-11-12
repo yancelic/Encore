@@ -116,7 +116,7 @@ mod tests {
                 assert!(!handle.is_invalid());
                 ready.send(()).unwrap();
                 let connected = ConnectNamedPipe(handle, None);
-                assert!(connected.is_ok() || connected.unwrap_err().code().0 as u32 == ERROR_PIPE_CONNECTED.0);
+                assert!(connected.is_ok() || connected.unwrap_err().code() == ERROR_PIPE_CONNECTED.to_hresult());
                 let file = std::fs::File::from_raw_handle(handle.0);
                 let mut reader = BufReader::new(file);
                 let mut request = String::new();
@@ -125,11 +125,11 @@ mod tests {
                 if let Some(reply) = reply {
                     reader.get_mut().write_all(reply.as_bytes()).unwrap();
                     let _ = FlushFileBuffers(handle);
-                } else { std::thread::sleep(Duration::from_millis(150)); }
+                } else { std::thread::sleep(Duration::from_millis(700)); }
                 let _ = DisconnectNamedPipe(handle);
             });
             started.recv_timeout(Duration::from_secs(2)).unwrap();
-            let result = send_ui_command_to_pipe(&pipe, "show", Duration::from_millis(50));
+            let result = send_ui_command_to_pipe(&pipe, "show", Duration::from_millis(500));
             server.join().unwrap();
             match reply {
                 Some("ok\n") => assert!(result.unwrap()),

@@ -643,7 +643,6 @@ pub fn run() {
             }
             #[cfg(windows)]
             apply_windows_taskbar_icon(app.handle());
-            #[cfg(windows)]
             tray::start_wake_listener(app.handle().clone());
             // Restore an older recorder's hidden tray as well. This is not needed for
             // newly launched recorders, which always start with their own visible icon.
