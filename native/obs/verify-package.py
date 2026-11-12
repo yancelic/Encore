@@ -38,8 +38,10 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         raise
     subprocess.check_call([sys.executable, str(root / 'native/obs/verify-self-test.py'),
         str(directory / 'self-test/encore-self-test.mp4')])
-    diagnostics = json.loads(subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],
-        cwd=directory, env=environment))
+    query = subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],
+        cwd=directory, env=environment, text=True)
+    diagnostics = json.loads(next(line.removeprefix('ENCORE_QUERY ') for line in query.splitlines()
+        if line.startswith('ENCORE_QUERY ')))
     registered = {source['id'] for source in diagnostics['sources']}
     assert diagnostics['video_source'] in registered, diagnostics
     assert diagnostics['h264_encoders'], diagnostics

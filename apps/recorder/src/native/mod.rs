@@ -482,7 +482,9 @@ fn query(action: &str) -> Result<(), String> {
     let api = ffi::Api::load(&runtime.join("lib").join(name))?;
     let replay = Arc::new(Mutex::new(RingBuffer::new(Duration::from_secs(1), 1024 * 1024)));
     let mut engine = ffi::Engine::open(api, &runtime, replay)?;
-    println!("{}", engine.request(&json!({"action":action}))?);
+    // Third-party capture plugins may write directly to stdout. Frame the helper
+    // response so their diagnostics cannot corrupt device discovery in the UI.
+    println!("\nENCORE_QUERY {}", engine.request(&json!({"action":action}))?);
     Ok(())
 }
 

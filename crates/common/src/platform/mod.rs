@@ -98,7 +98,10 @@ pub fn native_query(action: &str) -> Result<serde_json::Value, String> {
     if !output.status.success() {
         return Err(format!("Native device query failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
-    serde_json::from_slice(&output.stdout).map_err(|e| format!("Invalid native query response: {e}"))
+    let text = String::from_utf8_lossy(&output.stdout);
+    let response = text.lines().rev().find_map(|line| line.strip_prefix("ENCORE_QUERY "))
+        .ok_or("Native query did not return a framed response")?;
+    serde_json::from_str(response).map_err(|e| format!("Invalid native query response: {e}"))
 }
 
 /// Locate the bundled native engine without depending on an installed OBS frontend.
