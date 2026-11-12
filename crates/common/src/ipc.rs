@@ -55,6 +55,8 @@ pub enum NativeCommand {
     ListAudioApplications,
     SelectCaptureSource,
     GetDiagnostics,
+    SetAutostart(bool),
+    GetAutostartPermission,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

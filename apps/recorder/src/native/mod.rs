@@ -18,6 +18,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPLAY_BUDGET: usize = 512 * 1024 * 1024;
+static TERMINATE: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn terminate(_: libc::c_int) { TERMINATE.store(true, Ordering::Release); }
 
 struct Control {
     request: IpcRequest,
@@ -227,11 +230,16 @@ fn serve(
 }
 
 fn native_data(engine: &mut ffi::Engine, command: NativeCommand) -> Result<IpcResponse, String> {
+    if let NativeCommand::SetAutostart(enabled) = command {
+        return Ok(IpcResponse::NativeData(engine.request(&json!({"action":"background", "autostart":enabled}))?));
+    }
     let action = match command {
         NativeCommand::ListCaptureApplications => "applications",
         NativeCommand::ListAudioApplications => "audio_applications",
         NativeCommand::SelectCaptureSource => "select_source",
         NativeCommand::GetDiagnostics => "diagnostics",
+        NativeCommand::GetAutostartPermission => "background_status",
+        NativeCommand::SetAutostart(_) => unreachable!(),
     };
     Ok(IpcResponse::NativeData(
         engine.request(&json!({"action":action}))?,
@@ -326,6 +334,9 @@ fn run() -> Result<(), String> {
     if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) {
         return Err(error.into());
     }
+    if std::env::var_os("FLATPAK_ID").is_some() {
+        engine.request(&json!({"action":"background", "autostart":config.start_with_windows}))?;
+    }
     let saves = Saves::new(api, status.clone());
     let (sender, receiver): (SyncSender<Control>, Receiver<Control>) = mpsc::sync_channel(8);
     let stop = Arc::new(AtomicBool::new(false));
@@ -337,7 +348,11 @@ fn run() -> Result<(), String> {
     });
     let mut next_status = Instant::now();
     let mut previous_engine_error = String::new();
-    while !stop.load(Ordering::Acquire) {
+    unsafe {
+        libc::signal(libc::SIGTERM, terminate as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, terminate as *const () as libc::sighandler_t);
+    }
+    while !stop.load(Ordering::Acquire) && !TERMINATE.load(Ordering::Acquire) {
         while let Ok(control) = receiver.try_recv() {
             handle_control(
                 control,
@@ -393,6 +408,7 @@ fn run() -> Result<(), String> {
                     status.hotkey = config.hotkey.clone();
                     let mut error = native["error"].as_str().unwrap_or_default();
                     if error.is_empty() { error = native["hotkey_warning"].as_str().unwrap_or_default(); }
+                    if error.is_empty() { error = native["background_warning"].as_str().unwrap_or_default(); }
                     if error != previous_engine_error {
                         status.error = if error.is_empty() {
                             None
@@ -417,6 +433,7 @@ fn run() -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(10));
     }
+    stop.store(true, Ordering::Release);
     // Drain accepted exports before releasing the IPC singleton or native library.
     drop(engine);
     drop(saves);
@@ -451,7 +468,13 @@ fn open_library() -> Result<(), String> {
 
 pub fn main() {
     let arguments: Vec<_> = std::env::args().collect();
-    let result = if arguments.get(1).map(String::as_str) == Some("--save") {
+    let result = if arguments.get(1).map(String::as_str) == Some("--autostart") {
+        match arguments.get(2).map(String::as_str) {
+            Some("yes") => background_permission(true),
+            Some("no") => background_permission(false),
+            _ => Err("Usage: encore-recorder --autostart yes|no".into()),
+        }
+    } else if arguments.get(1).map(String::as_str) == Some("--save") {
         match ipc::send_request(&IpcRequest::SaveClip) {
             Ok(IpcResponse::Ok) => Ok(()),
             Ok(IpcResponse::Err(error)) | Err(error) => Err(error),
@@ -485,6 +508,24 @@ fn query(action: &str) -> Result<(), String> {
     // Third-party capture plugins may write directly to stdout. Frame the helper
     // response so their diagnostics cannot corrupt device discovery in the UI.
     println!("\nENCORE_QUERY {}", engine.request(&json!({"action":action}))?);
+    Ok(())
+}
+
+fn background_permission(enabled: bool) -> Result<(), String> {
+    let runtime = encore_common::platform::native_runtime().ok_or("Native capture runtime missing")?;
+    let name = if cfg!(target_os = "macos") { "libencore_capture.dylib" } else { "libencore_capture.so" };
+    let api = ffi::Api::load(&runtime.join("lib").join(name))?;
+    let replay = Arc::new(Mutex::new(RingBuffer::new(Duration::from_secs(1), 1024 * 1024)));
+    let mut engine = ffi::Engine::open(api, &runtime, replay)?;
+    let mut answer = engine.request(&json!({"action":"background", "autostart":enabled}))?;
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while answer["pending"].as_bool().unwrap_or(false) {
+        if Instant::now() > deadline { return Err("Login startup permission dialog timed out".into()); }
+        engine.tick();
+        thread::sleep(Duration::from_millis(20));
+        answer = engine.request(&json!({"action":"background_status"}))?;
+    }
+    println!("\nENCORE_QUERY {answer}");
     Ok(())
 }
 

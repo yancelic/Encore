@@ -76,10 +76,17 @@ bool platform_microphone_ready(std::string &warning) {
     return false;
 }
 void platform_configure_hotkey(const std::string &) {
-    if (!CGPreflightListenEventAccess()) CGRequestListenEventAccess();
+    static bool requested = false;
+    if (!CGPreflightListenEventAccess() && !requested) { requested = true; CGRequestListenEventAccess(); }
 }
 std::string platform_hotkey_warning() {
     return CGPreflightListenEventAccess() ? "" : "Allow Encore Recorder in System Settings > Privacy & Security > Input Monitoring to save replays while another app is focused.";
+}
+void platform_request_background(bool) {}
+obs_data_t *platform_background_status() {
+    auto *result = obs_data_create();
+    obs_data_set_string(result, "error", "Use the macOS login startup setting");
+    return result;
 }
 bool platform_is_wayland() { return false; }
 const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
@@ -123,8 +130,23 @@ void platform_video_settings(obs_data_t *settings, const Application &applicatio
 
 std::vector<std::string> platform_audio_applications() {
     std::vector<std::string> result;
-    for (const auto &application : platform_applications()) result.push_back(application.id);
+    @autoreleasepool {
+        for (NSRunningApplication *application in NSWorkspace.sharedWorkspace.runningApplications) {
+            NSString *identifier = application.bundleIdentifier;
+            if (!identifier.length || [identifier hasPrefix:@"com.encore."]
+                || application.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
+            result.emplace_back(identifier.UTF8String);
+        }
+    }
     return result;
+}
+uint64_t platform_audio_identity(const std::string &identifier) {
+    @autoreleasepool {
+        NSString *bundle = [NSString stringWithUTF8String:identifier.c_str()];
+        NSArray *applications = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle];
+        for (NSRunningApplication *application in applications) if (!application.terminated) return application.processIdentifier;
+    }
+    return 0;
 }
 
 const char *platform_audio_source(bool microphone, bool) {

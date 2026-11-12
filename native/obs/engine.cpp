@@ -10,6 +10,7 @@
 #include <cmath>
 #include <cctype>
 #include <cstdio>
+#include <cstdlib>
 #include <filesystem>
 #include <memory>
 #include <set>
@@ -36,6 +37,7 @@ struct Engine {
     obs_data_t *config = nullptr;
     obs_source_t *video = nullptr;
     obs_source_t *audio[3]{};
+    uint64_t audio_identity[3]{};
     obs_scene_t *scene = nullptr;
     obs_output_t *output = nullptr;
     obs_encoder_t *encoders[4]{};
@@ -98,6 +100,8 @@ struct Engine {
             if (source) obs_source_release(source);
             source = nullptr;
         }
+        for (auto &identity : audio_identity) identity = 0;
+        for (auto &warning : warnings) warning.clear();
         target = {};
     }
 
@@ -252,6 +256,10 @@ struct Engine {
 
     void create_audio(unsigned track, const std::string &selection, bool app) {
         if (selection.empty() || selection == "off") return;
+        if (app) {
+            audio_identity[track] = encore::platform_audio_identity(selection);
+            if (!audio_identity[track]) { warnings[track] = "Waiting for " + selection + " to start"; return; }
+        }
         if (track == 2 && !encore::platform_microphone_ready(warnings[track])) return;
         OBSDataAutoRelease settings = obs_data_create();
         encore::platform_audio_settings(settings, selection, app);
@@ -365,6 +373,21 @@ struct Engine {
             if (!video || target.window != chosen->window || target.id != chosen->id) create_capture(*chosen);
         }
         if (!video) return;
+        if (!obs_data_get_bool(config, "diagnostic_source") && std::string(obs_data_get_string(config, "audio_mode")) == "Applications") {
+            const std::string selections[] = {
+                obs_data_get_bool(config, "game_audio_enabled") ?
+                    (encore::platform_is_wayland() ? obs_data_get_string(config, "game_application") : target.id) : "",
+                obs_data_get_string(config, "chat_application")
+            };
+            for (unsigned track = 0; track < 2; ++track) {
+                const auto &selection = selections[track];
+                if (audio[track] && audio_identity[track] != encore::platform_audio_identity(selection)) {
+                    obs_set_output_source(track + 1, nullptr);
+                    obs_source_release(audio[track]); audio[track] = nullptr;
+                }
+                if (!audio[track] && !selection.empty()) create_audio(track, selection, true);
+            }
+        }
         if (!obs_data_get_bool(config, "diagnostic_source") && !audio[2])
             create_audio(2, obs_data_get_string(config, "mic_device"), false);
         const auto sw = obs_source_get_width(video), sh = obs_source_get_height(video);
@@ -393,6 +416,13 @@ struct Engine {
         obs_data_set_string(data, "error", error.c_str());
         const auto hotkey_warning = configured && !obs_data_get_bool(config, "diagnostic_source") ? encore::platform_hotkey_warning() : "";
         obs_data_set_string(data, "hotkey_warning", hotkey_warning.c_str());
+        if (configured && !obs_data_get_bool(config, "diagnostic_source") && std::getenv("FLATPAK_ID")) {
+            OBSDataAutoRelease permission = encore::platform_background_status();
+            const char *warning = obs_data_get_bool(permission, "pending") ? "Approve background recording in the desktop permission dialog." : obs_data_get_string(permission, "error");
+            if (!*warning && !obs_data_get_bool(permission, "background"))
+                warning = "The desktop has not allowed background recording. Approve Encore's background permission in desktop settings before closing the library.";
+            obs_data_set_string(data, "background_warning", warning);
+        }
         obs_data_set_string(data, "encoder", encoder_name.c_str());
         for (unsigned i = 0; i < 3; ++i) obs_data_set_string(data, ("audio_warning_" + std::to_string(i)).c_str(), warnings[i].c_str());
         return data;
@@ -544,6 +574,11 @@ extern "C" const char *ec_request(void *handle, const char *json) {
         } else if (action == "tray") {
             engine->tray_visible = obs_data_get_bool(request, "visible");
             encore::platform_set_tray(engine->tray_visible, engine->output && obs_output_active(engine->output));
+        } else if (action == "background" || action == "background_status") {
+            if (action == "background") encore::platform_request_background(obs_data_get_bool(request, "autostart"));
+            OBSDataAutoRelease result = encore::platform_background_status();
+            engine->reply = obs_data_get_json(result);
+            return engine->reply.c_str();
         } else if (action == "select_source") {
             engine->clear_capture();
             const auto path = fs::path(obs_data_get_string(engine->config, "state_dir")) / "capture-source.json";

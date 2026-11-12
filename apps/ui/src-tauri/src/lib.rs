@@ -284,7 +284,9 @@ async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
         std::fs::create_dir_all(&cfg.clips_dir).map_err(|e| e.to_string())?;
         let target_exe = find_recorder_exe(res_dir.as_deref())
             .or_else(|| std::env::current_exe().ok());
-        if let Some(exe) = target_exe.filter(|_| encore_common::platform::capabilities().autostart) {
+        let sync_startup = cfg.start_with_windows != prev_cfg.start_with_windows
+            || (std::env::var_os("FLATPAK_ID").is_none() && (cfg.start_with_windows || autostart::is_autostart_enabled()));
+        if let Some(exe) = target_exe.filter(|_| encore_common::platform::capabilities().autostart && sync_startup) {
             autostart::set_autostart(&exe, cfg.start_with_windows)
                 .map_err(|e| format!("Failed updating startup setting: {e}"))?;
         }

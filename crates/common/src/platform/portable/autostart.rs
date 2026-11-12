@@ -16,7 +16,7 @@ pub fn is_autostart_enabled() -> bool {
 
 pub fn set_autostart(executable: &Path, enabled: bool) -> Result<(), String> {
     if std::env::var_os("FLATPAK_ID").is_some() {
-        return Err("Flatpak login startup requires permission from the desktop background portal".into());
+        return set_portal_autostart(enabled);
     }
     let path = entry_path()?;
     if !enabled {
@@ -43,4 +43,29 @@ pub fn set_autostart(executable: &Path, enabled: bool) -> Result<(), String> {
     };
     std::fs::create_dir_all(path.parent().ok_or("Invalid startup path")?).map_err(|e| e.to_string())?;
     std::fs::write(path, content).map_err(|e| e.to_string())
+}
+
+fn set_portal_autostart(enabled: bool) -> Result<(), String> {
+    use crate::ipc::{self, IpcRequest, IpcResponse, NativeCommand};
+    use std::time::{Duration, Instant};
+    let mut answer = match ipc::send_request(&IpcRequest::Native(NativeCommand::SetAutostart(enabled))) {
+        Ok(IpcResponse::NativeData(value)) => value,
+        Ok(IpcResponse::Err(error)) => return Err(error),
+        _ => crate::platform::native_helper_request(&["--autostart", if enabled { "yes" } else { "no" }])?,
+    };
+    let deadline = Instant::now() + Duration::from_secs(120);
+    while answer["pending"].as_bool().unwrap_or(false) {
+        if Instant::now() > deadline { return Err("Login startup permission dialog timed out; reopen Settings to retry".into()); }
+        std::thread::sleep(Duration::from_millis(200));
+        answer = match ipc::send_request(&IpcRequest::Native(NativeCommand::GetAutostartPermission)) {
+            Ok(IpcResponse::NativeData(value)) => value,
+            Ok(IpcResponse::Err(error)) | Err(error) => return Err(error),
+            _ => return Err("Unexpected login startup response".into()),
+        };
+    }
+    if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
+    if answer["autostart"].as_bool() != Some(enabled) || (enabled && answer["background"].as_bool() != Some(true)) {
+        return Err("The desktop did not grant the requested login startup permission".into());
+    }
+    Ok(())
 }

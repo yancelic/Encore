@@ -20,7 +20,7 @@ pub fn capabilities() -> PlatformCapabilities {
         os: std::env::consts::OS,
         recording: cfg!(windows) || native_runtime().is_some(),
         application_audio: crate::processes::application_loopback_supported(),
-        autostart: cfg!(windows) || (native_runtime().is_some() && std::env::var_os("FLATPAK_ID").is_none()),
+        autostart: cfg!(windows) || native_runtime().is_some(),
         updates: cfg!(windows),
         portal_capture: cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
     }
@@ -92,11 +92,18 @@ pub fn native_query(action: &str) -> Result<serde_json::Value, String> {
         Ok(IpcResponse::Err(error)) => return Err(error),
         _ => {},
     }
+    native_helper_request(&["--query", action])
+}
+
+#[cfg(unix)]
+pub fn native_helper_request(arguments: &[&str]) -> Result<serde_json::Value, String> {
     let executable = recorder_path(None).ok_or("Native recorder helper is missing")?;
-    let output = Command::new(executable).args(["--query", action])
+    let output = Command::new(executable).args(arguments)
         .stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
     if !output.status.success() {
-        return Err(format!("Native device query failed: {}", String::from_utf8_lossy(&output.stderr)));
+        let log = String::from_utf8_lossy(&output.stderr);
+        let error = log.lines().rev().find_map(|line| line.strip_prefix("Encore recorder: ")).unwrap_or("The native helper failed; check the recorder log");
+        return Err(error.chars().take(512).collect());
     }
     let text = String::from_utf8_lossy(&output.stdout);
     let response = text.lines().rev().find_map(|line| line.strip_prefix("ENCORE_QUERY "))

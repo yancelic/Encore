@@ -61,7 +61,10 @@ void wayland_shortcuts_shutdown() {
 }
 
 void wayland_shortcuts_configure(const std::string &trigger) {
+    static std::string configured_trigger;
+    if (connection && !session.empty() && configured_trigger == trigger && warning.empty()) return;
     wayland_shortcuts_shutdown();
+    configured_trigger = trigger;
     GError *error = nullptr;
     connection = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
     if (!connection) {

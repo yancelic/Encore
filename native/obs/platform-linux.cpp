@@ -19,6 +19,7 @@
 #include <chrono>
 
 namespace encore {
+void platform_background_shutdown();
 namespace {
 Display *xdisplay = nullptr;
 bool wayland = false;
@@ -80,7 +81,7 @@ void platform_pump() {
     for (unsigned i = 0; i < 32 && g_main_context_pending(nullptr); ++i)
         g_main_context_iteration(nullptr, false);
 }
-void platform_shutdown() { wayland_shortcuts_shutdown(); platform_set_tray(false, false); xdisplay = nullptr; }
+void platform_shutdown() { platform_background_shutdown(); wayland_shortcuts_shutdown(); platform_set_tray(false, false); xdisplay = nullptr; }
 void platform_set_tray(bool visible, bool recording) {
     if (!visible) {
         if (indicator) { app_indicator_set_status(indicator, APP_INDICATOR_STATUS_PASSIVE); g_object_unref(indicator); indicator = nullptr; }
@@ -195,6 +196,7 @@ std::vector<std::string> platform_audio_applications() {
     pw_main_loop_destroy(loop);
     return query.applications;
 }
+uint64_t platform_audio_identity(const std::string &) { return 1; } // PipeWire reconnects streams through registry events.
 
 const char *platform_audio_source(bool microphone, bool application) {
     return microphone ? "pulse_input_capture" : application ? "pipewire_audio_application_capture" : "pulse_output_capture";
