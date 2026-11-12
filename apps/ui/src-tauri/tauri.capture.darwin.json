@@ -1,8 +1,5 @@
 {
   "bundle": {
-    "resources": {
-      "../../../tools/obs-runtime/": "obs-runtime/",
-      "../../../tools/Encore Recorder.app/": "Encore Recorder.app/"
-    }
+    "targets": ["app"]
   }
 }

@@ -17,6 +17,8 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         subprocess.check_call(['ditto', str(root / 'target/release/bundle/macos/Encore.app'), str(app)])
         subprocess.check_call(['codesign', '--verify', '--deep', '--strict', str(app)])
         helper = app / 'Contents/Resources/Encore Recorder.app/Contents/MacOS/encore-recorder'
+        framework = app / 'Contents/Resources/obs-runtime/Contents/Frameworks/libobs.framework'
+        assert (framework / 'Versions/Current').is_symlink(), 'The macOS framework layout was flattened during packaging'
         # FFmpeg must come from the bundle, even with Homebrew absent from PATH.
         environment['PATH'] = '/usr/bin:/bin:/usr/sbin:/sbin'
         prefix = []
@@ -26,8 +28,14 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         helper = next(path for path in directory.rglob('encore-recorder') if path.is_file())
         prefix = ['xvfb-run', '-a']
         environment['LIBGL_ALWAYS_SOFTWARE'] = '1'
-    subprocess.check_call([*prefix, str(helper), '--self-test', str(directory / 'self-test')],
-        cwd=directory, env=environment)
+    arguments = [*prefix, str(helper), '--self-test', str(directory / 'self-test')]
+    try:
+        subprocess.check_call(arguments, cwd=directory, env=environment)
+    except subprocess.CalledProcessError as error:
+        if sys.platform == 'darwin' and error.returncode < 0:
+            subprocess.run(['lldb', '--batch', '-o', 'run', '-o', 'thread backtrace all', '--', *arguments],
+                cwd=directory, env=environment, timeout=30, check=False)
+        raise
     subprocess.check_call([sys.executable, str(root / 'native/obs/verify-self-test.py'),
         str(directory / 'self-test/encore-self-test.mp4')])
     diagnostics = json.loads(subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],

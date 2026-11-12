@@ -7,6 +7,7 @@ if [[ ! -f target/release/encore-ui ]]; then
 fi
 mkdir -p packaging/flatpak/input
 install -m755 target/release/encore-ui packaging/flatpak/input/encore-ui
+install -m755 target/release/encore-recorder packaging/flatpak/input/encore-recorder
 flatpak-builder --user --install-deps-from=flathub --repo=target/flatpak-repo \
   target/flatpak-build packaging/flatpak/com.encore.clipper.json
 flatpak build-bundle target/flatpak-repo target/Encore-linux-x86_64-dev.flatpak com.encore.clipper dev

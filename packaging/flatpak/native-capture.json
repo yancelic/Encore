@@ -1,0 +1,91 @@
+{
+  "name": "native-capture",
+  "buildsystem": "simple",
+  "build-commands": ["true"],
+  "modules": [
+    {
+      "name": "simde",
+      "buildsystem": "meson",
+      "config-opts": ["-Dtests=false"],
+      "sources": [{"type": "git", "url": "https://github.com/simd-everywhere/simde.git", "commit": "71fd833d9666141edcd1d3c109a80e228303d8d7"}]
+    },
+    {
+      "name": "uthash",
+      "buildsystem": "simple",
+      "build-commands": ["install -d /app/include", "install -m644 src/*.h /app/include/"],
+      "sources": [{"type": "git", "url": "https://github.com/troydhanson/uthash.git", "commit": "e493aa90a2833b4655927598f169c31cfcdf7861"}]
+    },
+    {
+      "name": "jansson",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DJANSSON_EXAMPLES=OFF", "-DJANSSON_BUILD_DOCS=OFF", "-DJANSSON_BUILD_SHARED_LIBS=ON", "-DJANSSON_WITHOUT_TESTS=ON", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "sources": [{"type": "git", "url": "https://github.com/akheron/jansson.git", "commit": "684e18c927e89615c2d501737e90018f4930d6c5"}]
+    },
+    {
+      "name": "pciutils",
+      "no-autogen": true,
+      "make-args": ["PREFIX=/app", "SHARED=yes", "DNS=no", "ZLIB=no", "LIBKMOD=no"],
+      "make-install-args": ["PREFIX=/app", "SHARED=yes", "DNS=no", "ZLIB=no", "LIBKMOD=no"],
+      "install-rule": "install-lib",
+      "sources": [{"type": "git", "url": "https://github.com/pciutils/pciutils.git", "commit": "7c5bf915f87d8e4c62be66275c8e73a5f03fa5ee"}]
+    },
+    {
+      "name": "nv-codec",
+      "no-autogen": true,
+      "make-install-args": ["PREFIX=/app"],
+      "sources": [{"type": "git", "url": "https://github.com/FFmpeg/nv-codec-headers.git", "commit": "c69278340ab1d5559c7d7bf0edf615dc33ddbba7"}]
+    },
+    {
+      "name": "intltool",
+      "sources": [{"type": "archive", "url": "https://archive.ubuntu.com/ubuntu/pool/main/i/intltool/intltool_0.51.0.orig.tar.gz", "sha256": "67c74d94196b153b774ab9f89b2fa6c6ba79352407037c8c14d5aeb334e959cd"}]
+    },
+    {
+      "name": "libdbusmenu",
+      "config-opts": ["--with-gtk=3", "--disable-dumper", "--disable-static", "--disable-tests", "--disable-introspection", "--disable-vala", "--disable-gtk-doc"],
+      "build-options": {"env": {"HAVE_VALGRIND_FALSE": "#", "HAVE_VALGRIND_TRUE": "", "MAKEFLAGS": "-j1"}},
+      "make-args": ["CFLAGS=-Wall -O2 -g -fPIC -Wno-error", "CXXFLAGS=-Wall -O2 -g -fPIC -Wno-error"],
+      "sources": [{"type": "archive", "url": "https://launchpad.net/libdbusmenu/16.04/16.04.0/+download/libdbusmenu-16.04.0.tar.gz", "sha256": "b9cc4a2acd74509435892823607d966d424bd9ad5d0b00938f27240a1bfa878a"}]
+    },
+    {
+      "name": "ayatana-ido",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DENABLE_TESTS=OFF", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "sources": [{"type": "archive", "url": "https://github.com/AyatanaIndicators/ayatana-ido/archive/refs/tags/0.10.4.tar.gz", "sha256": "bd59abd5f1314e411d0d55ce3643e91cef633271f58126be529de5fb71c5ab38"}]
+    },
+    {
+      "name": "libayatana-indicator",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DENABLE_TESTS=OFF", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "sources": [{"type": "archive", "url": "https://github.com/AyatanaIndicators/libayatana-indicator/archive/refs/tags/0.9.4.tar.gz", "sha256": "a18d3c682e29afd77db24366f8475b26bda22b0e16ff569a2ec71cd6eb4eac95"}]
+    },
+    {
+      "name": "libayatana-appindicator",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DENABLE_BINDINGS_MONO=OFF", "-DENABLE_BINDINGS_VALA=OFF", "-DENABLE_TESTS=OFF", "-DFLAVOUR_GTK3=ON", "-DCMAKE_INSTALL_LIBDIR=lib", "-DENABLE_GTKDOC=OFF"],
+      "sources": [{"type": "archive", "url": "https://github.com/AyatanaIndicators/libayatana-appindicator/archive/refs/tags/0.5.94.tar.gz", "sha256": "884a6bc77994c0b58c961613ca4c4b974dc91aa0f804e70e92f38a542d0d0f90"}]
+    },
+    {
+      "name": "obs-capture-core",
+      "buildsystem": "cmake-ninja",
+      "builddir": true,
+      "config-opts": ["-DENABLE_UI=OFF", "-DENABLE_FRONTEND=OFF", "-DENABLE_SCRIPTING=OFF", "-DENABLE_WAYLAND=ON", "-DENABLE_PULSEAUDIO=ON", "-DENABLE_NEW_MPEGTS_OUTPUT=OFF", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "sources": [
+        {"type": "git", "url": "https://github.com/obsproject/obs-studio.git", "commit": "dcdbd2e9048ae66237fdab32dbba72b745b1b9c5", "disable-submodules": true},
+        {"type": "file", "path": "obs-plugins.cmake", "dest": "plugins", "dest-filename": "CMakeLists.txt"}
+      ],
+      "post-install": ["install -Dm644 ../COPYING /app/share/licenses/encore/OBS-COPYING"]
+    },
+    {
+      "name": "pipewire-application-audio",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DLEGACY=ON", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "sources": [{"type": "git", "url": "https://github.com/dimtpap/obs-pipewire-audio-capture.git", "commit": "cc5a661e2f1037341cf92d6c990b6088876810b0"}],
+      "post-install": ["install -Dm644 LICENSE /app/share/licenses/encore/PIPEWIRE-AUDIO-LICENSE"]
+    },
+    {
+      "name": "encore-obs-bridge",
+      "buildsystem": "cmake-ninja",
+      "sources": [{"type": "dir", "path": "../../native/obs"}]
+    }
+  ]
+}

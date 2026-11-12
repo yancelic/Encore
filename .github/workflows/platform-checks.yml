@@ -24,6 +24,45 @@ env:
   CARGO_BUILD_JOBS: 2
 
 jobs:
+  flatpak:
+    name: Flatpak native runtime
+    needs: obs-linux
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: encore-obs-bridge-linux-dev
+          path: target/debian-artifact
+      - name: Prepare native executables from the verified Ubuntu package
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y flatpak flatpak-builder ffmpeg xvfb dbus-x11
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          mkdir -p target/debian-extract target/release
+          dpkg-deb -x target/debian-artifact/target/release/bundle/deb/*.deb target/debian-extract
+          cp target/debian-extract/usr/bin/encore-ui target/release/encore-ui
+          find target/debian-extract -type f -name encore-recorder -exec cp '{}' target/release/encore-recorder \;
+      - uses: actions/cache@v4
+        with:
+          path: .flatpak-builder
+          key: flatpak-native-${{ runner.os }}-${{ hashFiles('packaging/flatpak/*.json', 'packaging/flatpak/*.cmake') }}
+          restore-keys: flatpak-native-${{ runner.os }}-
+      - name: Build and install the Flatpak development bundle
+        run: |
+          bash packaging/flatpak/build.sh
+          flatpak install --user -y target/Encore-linux-x86_64-dev.flatpak
+      - name: Verify native replay inside the Flatpak sandbox
+        run: |
+          dbus-run-session -- xvfb-run -a flatpak run --env=LIBGL_ALWAYS_SOFTWARE=1 --command=sh com.encore.clipper -c 'exec encore-recorder --self-test "$XDG_CACHE_HOME/self-test"'
+          python3 native/obs/verify-self-test.py "$HOME/.var/app/com.encore.clipper/cache/self-test/encore-self-test.mp4"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: encore-flatpak-linux-dev
+          path: target/Encore-linux-x86_64-dev.flatpak
+          retention-days: 14
+
   obs-macos:
     name: Apple Silicon OBS bridge
     runs-on: macos-26

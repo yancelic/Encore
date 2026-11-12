@@ -11,6 +11,9 @@
     "--share=ipc",
     "--device=dri",
     "--socket=pulseaudio",
+    "--filesystem=xdg-run/pipewire-0",
+    "--talk-name=org.kde.StatusNotifierWatcher",
+    "--talk-name=com.canonical.AppMenu.Registrar",
     "--filesystem=xdg-videos"
   ],
   "modules": [
@@ -35,17 +38,20 @@
         "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
       }]
     },
+    "native-capture.json",
     {
       "name": "encore",
       "buildsystem": "simple",
       "build-commands": [
         "install -Dm755 encore-ui /app/bin/encore-ui",
+        "install -Dm755 encore-recorder /app/bin/encore-recorder",
         "install -Dm644 com.encore.clipper.desktop /app/share/applications/com.encore.clipper.desktop",
         "install -Dm644 com.encore.clipper.metainfo.xml /app/share/metainfo/com.encore.clipper.metainfo.xml",
         "install -Dm644 icon.png /app/share/icons/hicolor/256x256/apps/com.encore.clipper.png"
       ],
       "sources": [
         {"type": "file", "path": "input/encore-ui"},
+        {"type": "file", "path": "input/encore-recorder"},
         {"type": "file", "path": "com.encore.clipper.desktop"},
         {"type": "file", "path": "com.encore.clipper.metainfo.xml"},
         {"type": "file", "path": "../../apps/ui/src-tauri/icons/128x128@2x.png", "dest-filename": "icon.png"}

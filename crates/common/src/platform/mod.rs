@@ -125,6 +125,7 @@ pub fn native_runtime() -> Option<PathBuf> {
     }
     if let Ok(executable) = std::env::current_exe() {
         for ancestor in executable.ancestors().skip(1) {
+            if valid(ancestor) { return Some(ancestor.to_path_buf()); }
             for relative in [
                 "obs-runtime",
                 "resources/obs-runtime",

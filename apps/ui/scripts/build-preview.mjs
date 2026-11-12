@@ -23,4 +23,9 @@ const result = spawnSync(process.execPath, [cli, 'build', '--ci', '--config', `s
   cwd: ui, stdio: 'inherit', env: { ...process.env, CARGO_BUILD_JOBS: process.env.CARGO_BUILD_JOBS ?? '2' },
 });
 if (result.error) throw result.error;
+if (result.status === 0 && process.platform === 'darwin') {
+  const finish = spawnSync('python3', [fileURLToPath(new URL('./finish-macos-bundle.py', import.meta.url))], { cwd: ui, stdio: 'inherit' });
+  if (finish.error) throw finish.error;
+  process.exit(finish.status ?? 1);
+}
 process.exit(result.status ?? 1);
