@@ -43,28 +43,7 @@ impl AppState {
 }
 
 fn find_recorder_exe(resource_dir: Option<&Path>) -> Option<PathBuf> {
-    if let Some(res) = resource_dir {
-        let cand = res.join("encore-recorder.exe");
-        if cand.exists() {
-            return Some(cand);
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        for anc in exe.ancestors().skip(1) {
-            for rel in [
-                "encore-recorder.exe",
-                "resources\\encore-recorder.exe",
-                "target\\release\\encore-recorder.exe",
-                "target\\debug\\encore-recorder.exe",
-            ] {
-                let cand = anc.join(rel);
-                if cand.exists() {
-                    return Some(cand);
-                }
-            }
-        }
-    }
-    None
+    encore_common::platform::recorder_path(resource_dir)
 }
 
 fn unique_output_path(dir: &Path, stem: &str, suffix: &str) -> PathBuf {
@@ -173,26 +152,29 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
         return Ok(());
     }
     let exe = find_recorder_exe(res_dir)
-        .ok_or_else(|| "Could not find encore-recorder.exe".to_string())?;
+        .ok_or_else(|| "Could not find the Encore recorder helper".to_string())?;
+    let log_path = Config::dir().join("recorder.log");
+    let _ = std::fs::create_dir_all(Config::dir());
+    let log = std::fs::File::create(&log_path).map_err(|e| format!("Cannot create recorder log: {e}"))?;
     let mut child = Command::new(&exe)
         .background()
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(log)
         .spawn()
         .map_err(|e| format!("Failed to start {}: {e}", exe.display()))?;
-    for _ in 0..30 {
+    for _ in 0..100 {
         if matches!(ipc::send_request(&IpcRequest::GetStatus), Ok(IpcResponse::Status(_))) {
             return Ok(());
         }
         if let Ok(Some(exit_status)) = child.try_wait() {
             return Err(format!(
-                "Recorder exited immediately (status {exit_status}). Check your hotkey or settings."
+                "Recorder exited immediately (status {exit_status}). Details: {}", log_path.display()
             ));
         }
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
-    Err("Recorder launched but did not respond on IPC pipe".into())
+    Err(format!("Recorder launched but did not respond. Details: {}", log_path.display()))
 }
 
 #[tauri::command]
@@ -229,7 +211,15 @@ async fn trigger_save_clip() -> Result<(), String> {
 async fn list_audio_devices() -> Vec<AudioDeviceInfo> {
     run_blocking(|| match ipc::send_request(&IpcRequest::ListAudioDevices) {
         Ok(IpcResponse::AudioDevices(devs)) => Ok(devs),
-        _ => Ok(ipc::list_audio_devices()),
+        _ => {
+            #[cfg(windows)]
+            return Ok(ipc::list_audio_devices());
+            #[cfg(unix)]
+            {
+                let value = encore_common::platform::native_query("audio_devices")?;
+                serde_json::from_value(value["devices"].clone()).map_err(|e| e.to_string())
+            }
+        },
     })
     .await
     .unwrap_or_default()
@@ -248,10 +238,30 @@ async fn list_capture_applications() -> Result<Vec<game_picker::CaptureApplicati
 #[tauri::command]
 async fn pick_game_executable() -> Result<Option<String>, String> {
     run_blocking(|| {
-        rfd::FileDialog::new().set_title("Choose your game executable")
-            .add_filter("Windows game executable", &["exe"]).pick_file()
+        let dialog = rfd::FileDialog::new().set_title("Choose your game application");
+        #[cfg(windows)]
+        let dialog = dialog.add_filter("Windows game executable", &["exe"]);
+        #[cfg(target_os = "macos")]
+        let dialog = dialog.add_filter("macOS application", &["app"]);
+        dialog.pick_file()
             .map(|path| game_picker::executable_filename(&path)).transpose()
     }).await
+}
+
+#[tauri::command]
+async fn select_capture_source(app: AppHandle) -> Result<(), String> {
+    #[cfg(unix)]
+    return run_blocking(move || {
+        launch_recorder_blocking(app.path().resource_dir().ok().as_deref())?;
+        match ipc::send_request(&IpcRequest::Native(ipc::NativeCommand::SelectCaptureSource)) {
+            Ok(IpcResponse::NativeData(value)) if value["error"].as_str().unwrap_or_default().is_empty() => Ok(()),
+            Ok(IpcResponse::NativeData(value)) => Err(value["error"].as_str().unwrap_or("Could not select capture source").into()),
+            Ok(IpcResponse::Err(error)) | Err(error) => Err(error),
+            _ => Err("Unexpected recorder response".into()),
+        }
+    }).await;
+    #[cfg(windows)]
+    { let _ = app; Err("Use the running application picker on Windows".into()) }
 }
 
 #[tauri::command]
@@ -272,17 +282,20 @@ async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
     run_blocking(move || {
         let prev_cfg = Config::load();
         std::fs::create_dir_all(&cfg.clips_dir).map_err(|e| e.to_string())?;
-        cfg.save().map_err(|e| e.to_string())?;
         let target_exe = find_recorder_exe(res_dir.as_deref())
             .or_else(|| std::env::current_exe().ok());
         if let Some(exe) = target_exe.filter(|_| encore_common::platform::capabilities().autostart) {
             autostart::set_autostart(&exe, cfg.start_with_windows)
                 .map_err(|e| format!("Failed updating startup setting: {e}"))?;
         }
+        cfg.save().map_err(|e| e.to_string())?;
         match ipc::send_request(&IpcRequest::ReloadConfig) {
             Ok(IpcResponse::Ok) | Err(_) => Ok(()),
             Ok(IpcResponse::Err(e)) => {
                 let _ = prev_cfg.save();
+                if let Some(exe) = find_recorder_exe(res_dir.as_deref()).filter(|_| encore_common::platform::capabilities().autostart) {
+                    let _ = autostart::set_autostart(&exe, prev_cfg.start_with_windows);
+                }
                 Err(e)
             }
             _ => Ok(()),
@@ -673,6 +686,7 @@ pub fn run() {
             list_audio_devices,
             list_audio_applications,
             list_capture_applications,
+            select_capture_source,
             pick_game_executable,
             get_platform_capabilities,
             get_config,

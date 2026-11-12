@@ -27,11 +27,16 @@ jobs:
   obs-macos:
     name: Apple Silicon OBS bridge
     runs-on: macos-26
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
       - name: Prepare the verified native capture runtime
         run: |
           brew install cmake pkg-config ffmpeg
@@ -42,6 +47,13 @@ jobs:
           cargo run --locked -p encore-recorder -- --self-test target/native-self-test
           ffmpeg -v error -i target/native-self-test/encore-self-test.mp4 -map 0 -f null -
           python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
+      - name: Package the native Apple Silicon development app
+        run: |
+          python3 apps/ui/scripts/prepare-macos-ffmpeg.py
+          npm --prefix apps/ui ci
+          npm --prefix apps/ui run build:preview
+          target/release/bundle/macos/Encore.app/Contents/Resources/ffmpeg -version
+          codesign --verify --deep --strict target/release/bundle/macos/Encore.app
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -49,39 +61,48 @@ jobs:
           path: |
             tools/obs-runtime/lib/libencore_capture.dylib
             target/native-self-test/*
+            target/release/bundle/dmg/*.dmg
           retention-days: 14
 
   obs-linux:
     name: Linux OBS bridge
     runs-on: ubuntu-24.04
-    timeout-minutes: 20
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
       - name: Install native development dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev xvfb
+          sudo apt-get install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev libayatana-appindicator3-dev libpipewire-0.3-dev libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev xvfb
       - name: Compile capture and mux bridge
         run: |
-          cmake -S native/obs -B target/obs-bridge -DCMAKE_BUILD_TYPE=RelWithDebInfo
-          cmake --build target/obs-bridge --parallel 2
+          python3 native/obs/prepare-linux.py
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
       - name: Exercise the complete native encoder and replay pipeline
         run: |
-          mkdir -p tools/obs-runtime/lib
-          cp target/obs-bridge/libencore_capture.so tools/obs-runtime/lib/
           export ENCORE_NATIVE_RUNTIME="$PWD/tools/obs-runtime"
           export LIBGL_ALWAYS_SOFTWARE=1
           xvfb-run -a cargo run --locked -p encore-recorder -- --self-test target/native-self-test
           ffmpeg -v error -i target/native-self-test/encore-self-test.mp4 -map 0 -f null -
           python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
+      - name: Package the native Ubuntu development app
+        run: |
+          npm --prefix apps/ui ci
+          npm --prefix apps/ui run build:preview
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: encore-obs-bridge-linux-dev
           path: |
-            target/obs-bridge/libencore_capture.so
+            tools/obs-runtime/lib/libencore_capture.so
             target/native-self-test/*
+            target/release/bundle/deb/*.deb
           retention-days: 14
 
   native:

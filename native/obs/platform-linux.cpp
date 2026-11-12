@@ -2,6 +2,7 @@
 #include "platform.hpp"
 #include <obs-nix-platform.h>
 #include <gtk/gtk.h>
+#include <libayatana-appindicator/app-indicator.h>
 #include <gdk/gdkx.h>
 #include <gdk/gdkwayland.h>
 #include <X11/Xlib.h>
@@ -18,6 +19,9 @@ namespace encore {
 namespace {
 Display *xdisplay = nullptr;
 bool wayland = false;
+AppIndicator *indicator = nullptr;
+GtkWidget *tray_menu = nullptr, *tray_status = nullptr;
+std::string tray_action;
 
 std::vector<unsigned long> property(Window window, const char *name) {
     Atom actual{}; int format = 0; unsigned long count = 0, remaining = 0; unsigned char *data = nullptr;
@@ -73,7 +77,36 @@ void platform_pump() {
     for (unsigned i = 0; i < 32 && g_main_context_pending(nullptr); ++i)
         g_main_context_iteration(nullptr, false);
 }
-void platform_shutdown() { xdisplay = nullptr; }
+void platform_shutdown() { platform_set_tray(false, false); xdisplay = nullptr; }
+void platform_set_tray(bool visible, bool recording) {
+    if (!visible) {
+        if (indicator) { app_indicator_set_status(indicator, APP_INDICATOR_STATUS_PASSIVE); g_object_unref(indicator); indicator = nullptr; }
+        if (tray_menu) { gtk_widget_destroy(tray_menu); tray_menu = nullptr; tray_status = nullptr; }
+        return;
+    }
+    if (!indicator) {
+        indicator = app_indicator_new("com.encore.recorder", "media-record", APP_INDICATOR_CATEGORY_APPLICATION_STATUS);
+        tray_menu = gtk_menu_new();
+        tray_status = gtk_menu_item_new_with_label("Encore — waiting for a game");
+        gtk_widget_set_sensitive(tray_status, false);
+        gtk_menu_shell_append(GTK_MENU_SHELL(tray_menu), tray_status);
+        const char *labels[] = {"Save replay", "Open library", "Open clips folder", "Quit Encore"};
+        const char *actions[] = {"save", "library", "folder", "quit"};
+        for (unsigned i = 0; i < 4; ++i) {
+            auto *item = gtk_menu_item_new_with_label(labels[i]);
+            g_signal_connect(item, "activate", G_CALLBACK(+[](GtkMenuItem *, gpointer action) {
+                tray_action = static_cast<const char *>(action);
+            }), const_cast<char *>(actions[i]));
+            gtk_menu_shell_append(GTK_MENU_SHELL(tray_menu), item);
+        }
+        gtk_widget_show_all(tray_menu);
+        app_indicator_set_menu(indicator, GTK_MENU(tray_menu));
+        app_indicator_set_status(indicator, APP_INDICATOR_STATUS_ACTIVE);
+    }
+    gtk_menu_item_set_label(GTK_MENU_ITEM(tray_status), recording ? "Encore — recording" : "Encore — waiting for a game");
+}
+std::string platform_tray_action() { auto action = tray_action; tray_action.clear(); return action; }
+bool platform_microphone_ready(std::string &) { return true; }
 bool platform_is_wayland() { return wayland; }
 const char *platform_graphics_module() { return "libobs-opengl.so"; }
 const char *platform_video_source() { return wayland ? "pipewire-window-capture-source" : "xcomposite_input"; }

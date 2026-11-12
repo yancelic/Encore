@@ -15,6 +15,9 @@ struct Application {
 bool platform_init(std::string &error);
 void platform_pump();
 void platform_shutdown();
+void platform_set_tray(bool visible, bool recording);
+std::string platform_tray_action();
+bool platform_microphone_ready(std::string &warning);
 bool platform_is_wayland();
 std::vector<Application> platform_applications();
 const char *platform_graphics_module();

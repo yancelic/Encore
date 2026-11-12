@@ -1,4 +1,4 @@
-//! Application routing is unavailable until the native capture backend is ready.
+//! Native application routing, queried through the background recorder.
 #[derive(Debug, Clone)]
 pub struct ProcessInfo {
     pub pid: u32,
@@ -10,7 +10,7 @@ pub fn snapshot() -> Vec<ProcessInfo> {
     Vec::new()
 }
 pub fn application_loopback_supported() -> bool {
-    false
+    crate::platform::native_runtime().is_some()
 }
 
 pub fn valid_executable(exe: &str) -> bool {
@@ -28,8 +28,10 @@ pub struct ApplicationAudioOptions {
 }
 
 pub fn application_audio_options() -> ApplicationAudioOptions {
+    let answer = crate::platform::native_query("audio_applications").unwrap_or_default();
     ApplicationAudioOptions {
-        supported: false,
-        executables: Vec::new(),
+        supported: answer["supported"].as_bool().unwrap_or(false),
+        executables: answer["applications"].as_array().into_iter().flatten()
+            .filter_map(|item| item["value"].as_str().map(str::to_owned)).collect(),
     }
 }

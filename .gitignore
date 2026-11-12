@@ -38,6 +38,7 @@ tools/*.dll
 tools/ffmpeg
 tools/ffmpeg-libs/
 tools/obs-runtime/
+tools/Encore Recorder.app/
 packaging/flatpak/input/
 .flatpak-builder/
 __pycache__/

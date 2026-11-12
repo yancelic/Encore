@@ -127,7 +127,8 @@ impl Config {
     pub fn validate_audio(&self) -> Result<(), String> {
         if self.audio_mode == AudioMode::Applications {
             if !processes::application_loopback_supported() {
-                return Err("Application audio requires Windows build 20348 or later. Select Devices instead.".into());
+                return Err(if cfg!(windows) { "Application audio requires Windows build 20348 or later. Select Devices instead." }
+                    else { "The native application audio runtime is missing. Reinstall Encore or select Devices." }.into());
             }
             if self.chat_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
                 return Err("Select a chat executable filename such as Chat.exe, not a window title or file path.".into());

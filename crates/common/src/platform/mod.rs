@@ -12,15 +12,17 @@ pub struct PlatformCapabilities {
     pub application_audio: bool,
     pub autostart: bool,
     pub updates: bool,
+    pub portal_capture: bool,
 }
 
 pub fn capabilities() -> PlatformCapabilities {
     PlatformCapabilities {
         os: std::env::consts::OS,
-        recording: cfg!(windows),
+        recording: cfg!(windows) || native_runtime().is_some(),
         application_audio: crate::processes::application_loopback_supported(),
-        autostart: cfg!(windows),
+        autostart: cfg!(windows) || (native_runtime().is_some() && std::env::var_os("FLATPAK_ID").is_none()),
         updates: cfg!(windows),
+        portal_capture: cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
     }
 }
 
@@ -50,6 +52,53 @@ static RESOURCE_DIR: OnceLock<PathBuf> = OnceLock::new();
 
 pub fn set_resource_dir(path: PathBuf) {
     let _ = RESOURCE_DIR.set(path);
+}
+
+pub fn recorder_path(resources: Option<&Path>) -> Option<PathBuf> {
+    let name = if cfg!(windows) { "encore-recorder.exe" } else { "encore-recorder" };
+    for root in resources.into_iter().chain(RESOURCE_DIR.get().map(PathBuf::as_path)) {
+        for relative in [PathBuf::from(name), Path::new("Encore Recorder.app/Contents/MacOS").join(name)] {
+            let candidate = root.join(relative);
+            if candidate.is_file() { return Some(candidate); }
+        }
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        for ancestor in executable.ancestors().skip(1) {
+            for relative in [PathBuf::from(name), Path::new("resources").join(name),
+                Path::new("target/release").join(name), Path::new("target/debug").join(name),
+                Path::new("../Resources/Encore Recorder.app/Contents/MacOS").join(name)] {
+                let candidate = ancestor.join(relative);
+                if candidate.is_file() { return Some(candidate); }
+            }
+        }
+    }
+    None
+}
+
+/// Query the running native recorder, or a short-lived helper which never starts capture.
+#[cfg(unix)]
+pub fn native_query(action: &str) -> Result<serde_json::Value, String> {
+    use crate::ipc::{self, IpcRequest, IpcResponse, NativeCommand};
+    let request = match action {
+        "applications" => IpcRequest::Native(NativeCommand::ListCaptureApplications),
+        "audio_applications" => IpcRequest::Native(NativeCommand::ListAudioApplications),
+        "audio_devices" => IpcRequest::ListAudioDevices,
+        "diagnostics" => IpcRequest::Native(NativeCommand::GetDiagnostics),
+        _ => return Err("Unsupported native query".into()),
+    };
+    match ipc::send_request(&request) {
+        Ok(IpcResponse::NativeData(value)) => return Ok(value),
+        Ok(IpcResponse::AudioDevices(devices)) => return Ok(serde_json::json!({"devices": devices})),
+        Ok(IpcResponse::Err(error)) => return Err(error),
+        _ => {},
+    }
+    let executable = recorder_path(None).ok_or("Native recorder helper is missing")?;
+    let output = Command::new(executable).args(["--query", action])
+        .stdin(std::process::Stdio::null()).output().map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(format!("Native device query failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    serde_json::from_slice(&output.stdout).map_err(|e| format!("Invalid native query response: {e}"))
 }
 
 /// Locate the bundled native engine without depending on an installed OBS frontend.
@@ -184,8 +233,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn preview_does_not_advertise_unimplemented_recording() {
-        assert_eq!(capabilities().recording, cfg!(windows));
+    fn recording_requires_the_platform_runtime() {
+        assert_eq!(capabilities().recording, cfg!(windows) || native_runtime().is_some());
         assert_eq!(capabilities().updates, cfg!(windows));
     }
 

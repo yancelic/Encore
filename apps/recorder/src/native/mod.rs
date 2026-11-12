@@ -277,7 +277,10 @@ fn handle_control(
                 stop.store(true, Ordering::Release);
                 Ok(IpcResponse::Ok)
             }
-            IpcRequest::SetTrayVisible(_) => Ok(IpcResponse::Ok),
+            IpcRequest::SetTrayVisible(visible) => {
+                engine.request(&json!({"action":"tray", "visible": visible}))?;
+                Ok(IpcResponse::Ok)
+            },
             IpcRequest::ListAudioDevices => {
                 let answer = engine.request(&json!({"action":"audio_devices"}))?;
                 let devices =
@@ -351,6 +354,19 @@ fn run() -> Result<(), String> {
             next_status = Instant::now() + Duration::from_millis(100);
             match engine.request(&json!({"action":"status"})) {
                 Ok(native) => {
+                    if native["quit_requested"].as_bool().unwrap_or(false) {
+                        let _ = ipc::send_ui_command("quit");
+                        stop.store(true, Ordering::Release);
+                    }
+                    if native["open_library"].as_bool().unwrap_or(false) {
+                        if let Err(error) = open_library() { status.lock().unwrap().error = Some(error); }
+                    }
+                    if native["open_folder"].as_bool().unwrap_or(false) {
+                        let _ = std::fs::create_dir_all(&config.clips_dir);
+                        if let Err(error) = encore_common::platform::reveal_path(&config.clips_dir) {
+                            status.lock().unwrap().error = Some(error);
+                        }
+                    }
                     let target = native["target"].as_str().unwrap_or_default();
                     if native["save_requested"].as_bool().unwrap_or(false) {
                         if let Err(error) = saves.submit(&engine, &replay, &config, target) {
@@ -406,6 +422,30 @@ fn run() -> Result<(), String> {
     let _ = listener.join();
     drop(server);
     Ok(())
+}
+
+fn open_library() -> Result<(), String> {
+    if ipc::send_ui_command("show").unwrap_or(false) { return Ok(()); }
+    let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+    #[cfg(target_os = "macos")]
+    for ancestor in executable.ancestors() {
+        if ancestor.extension().is_some_and(|extension| extension == "app")
+            && ancestor.file_name().is_some_and(|name| name != "Encore Recorder.app") {
+            Command::new("open").arg("-a").arg(ancestor).spawn().map_err(|e| e.to_string())?;
+            return Ok(());
+        }
+    }
+    for ancestor in executable.ancestors().skip(1) {
+        for relative in ["encore-ui", "bin/encore-ui"] {
+            let candidate = ancestor.join(relative);
+            if candidate.is_file() {
+                Command::new(candidate).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null())
+                    .spawn().map_err(|e| e.to_string())?;
+                return Ok(());
+            }
+        }
+    }
+    Err("Encore library executable is missing; reinstall the application".into())
 }
 
 pub fn main() {

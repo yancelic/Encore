@@ -2,7 +2,17 @@
 #include "platform.hpp"
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
+#import <AVFoundation/AVFoundation.h>
 #include <unistd.h>
+
+namespace { std::string tray_action; NSStatusItem *tray = nil; NSMenuItem *tray_status = nil; }
+@interface EncoreTrayDelegate : NSObject
+- (void)activate:(id)sender;
+@end
+@implementation EncoreTrayDelegate
+- (void)activate:(id)sender { tray_action = [[sender representedObject] UTF8String]; }
+@end
+namespace { EncoreTrayDelegate *tray_delegate = nil; }
 
 namespace encore {
 bool platform_init(std::string &) {
@@ -25,7 +35,46 @@ void platform_pump() {
         [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
     }
 }
-void platform_shutdown() {}
+void platform_shutdown() { platform_set_tray(false, false); [tray_delegate release]; tray_delegate = nil; }
+void platform_set_tray(bool visible, bool recording) {
+    @autoreleasepool {
+        if (!visible) {
+            if (tray) { [[NSStatusBar systemStatusBar] removeStatusItem:tray]; [tray release]; tray = nil; }
+            tray_status = nil;
+            return;
+        }
+        if (!tray) {
+            tray = [[[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength] retain];
+            tray.button.image = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Encore"];
+            if (!tray.button.image) tray.button.title = @"E";
+            if (!tray_delegate) tray_delegate = [[EncoreTrayDelegate alloc] init];
+            NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Encore"];
+            tray_status = [menu addItemWithTitle:@"Encore — waiting for a game" action:nil keyEquivalent:@""];
+            [menu addItem:[NSMenuItem separatorItem]];
+            for (NSArray *entry in @[@[@"Save replay", @"save"], @[@"Open library", @"library"],
+                                    @[@"Open clips folder", @"folder"], @[@"Quit Encore", @"quit"]]) {
+                NSMenuItem *item = [menu addItemWithTitle:entry[0] action:@selector(activate:) keyEquivalent:@""];
+                item.target = tray_delegate; item.representedObject = entry[1];
+            }
+            tray.menu = menu; [menu release];
+        }
+        tray_status.title = recording ? @"Encore — recording" : @"Encore — waiting for a game";
+    }
+}
+std::string platform_tray_action() { auto action = tray_action; tray_action.clear(); return action; }
+bool platform_microphone_ready(std::string &warning) {
+    const auto permission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (permission == AVAuthorizationStatusAuthorized) return true;
+    if (permission == AVAuthorizationStatusNotDetermined) {
+        static bool requested = false;
+        if (!requested) {
+            requested = true;
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) {}];
+        }
+        warning = "Allow Encore Recorder to use the microphone in the system permission dialog.";
+    } else warning = "Microphone permission is disabled. Enable Encore Recorder in System Settings > Privacy & Security > Microphone.";
+    return false;
+}
 bool platform_is_wayland() { return false; }
 const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
 const char *platform_video_source() { return "screen_capture"; }

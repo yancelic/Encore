@@ -8,6 +8,7 @@ export interface PlatformCapabilities {
   application_audio: boolean;
   autostart: boolean;
   updates: boolean;
+  portal_capture?: boolean;
 }
 
 const unavailable: PlatformCapabilities = {

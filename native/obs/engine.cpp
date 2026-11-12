@@ -42,6 +42,7 @@ struct Engine {
     std::atomic<bool> save_requested{false};
     std::atomic<bool> encoder_failed{false};
     bool configured = false;
+    bool tray_visible = true;
     bool core_started = false;
     log_handler_t previous_log = nullptr;
     void *previous_log_context = nullptr;
@@ -224,15 +225,21 @@ struct Engine {
         reset_video(1920, 1080);
         configure_hotkey();
         configured = true;
+        if (!obs_data_get_bool(config, "diagnostic_source")) encore::platform_set_tray(tray_visible, false);
         error.clear();
         next_poll = {};
     }
 
     void create_audio(unsigned track, const std::string &selection, bool app) {
         if (selection.empty() || selection == "off") return;
+        if (track == 2 && !encore::platform_microphone_ready(warnings[track])) return;
         OBSDataAutoRelease settings = obs_data_create();
         encore::platform_audio_settings(settings, selection, app);
         const char *id = encore::platform_audio_source(track == 2, app);
+        if (!(obs_get_source_output_flags(id) & OBS_SOURCE_AUDIO)) {
+            warnings[track] = "Selected audio backend is missing from the native runtime";
+            return;
+        }
         if (!app && selection != "default") {
             obs_properties_t *properties = obs_get_source_properties(id);
             obs_property_t *devices = properties ? obs_properties_get(properties, "device_id") : nullptr;
@@ -334,6 +341,8 @@ struct Engine {
             if (!video || target.window != chosen->window || target.id != chosen->id) create_capture(*chosen);
         }
         if (!video) return;
+        if (!obs_data_get_bool(config, "diagnostic_source") && !audio[2])
+            create_audio(2, obs_data_get_string(config, "mic_device"), false);
         const auto sw = obs_source_get_width(video), sh = obs_source_get_height(video);
         if (!sw || !sh) {
             if (output) stop_output();
@@ -346,6 +355,13 @@ struct Engine {
 
     obs_data_t *status() {
         auto *data = obs_data_create();
+        const auto action = encore::platform_tray_action();
+        if (action == "save") save_requested.store(true);
+        obs_data_set_bool(data, "open_library", action == "library");
+        obs_data_set_bool(data, "open_folder", action == "folder");
+        obs_data_set_bool(data, "quit_requested", action == "quit");
+        if (configured && !obs_data_get_bool(config, "diagnostic_source"))
+            encore::platform_set_tray(tray_visible, output && obs_output_active(output));
         obs_data_set_bool(data, "recording", output && obs_output_active(output));
         obs_data_set_bool(data, "save_requested", save_requested.exchange(false));
         obs_data_set_int(data, "epoch", static_cast<long long>(epoch));
@@ -499,6 +515,9 @@ extern "C" const char *ec_request(void *handle, const char *json) {
             OBSDataAutoRelease config = obs_data_get_obj(request, "config");
             if (!config) throw std::runtime_error("Missing configuration");
             engine->configure(config);
+        } else if (action == "tray") {
+            engine->tray_visible = obs_data_get_bool(request, "visible");
+            encore::platform_set_tray(engine->tray_visible, engine->output && obs_output_active(engine->output));
         } else if (action == "select_source") {
             engine->clear_capture();
             const auto path = fs::path(obs_data_get_string(engine->config, "state_dir")) / "capture-source.json";
