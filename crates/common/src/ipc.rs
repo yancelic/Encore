@@ -44,6 +44,17 @@ pub enum IpcRequest {
     SaveClip,
     SetTrayVisible(bool),
     Shutdown,
+    #[cfg(unix)]
+    Native(NativeCommand),
+}
+
+#[cfg(unix)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum NativeCommand {
+    ListCaptureApplications,
+    ListAudioApplications,
+    SelectCaptureSource,
+    GetDiagnostics,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -52,6 +63,8 @@ pub enum IpcResponse {
     AudioDevices(Vec<AudioDeviceInfo>),
     Ok,
     Err(String),
+    #[cfg(unix)]
+    NativeData(serde_json::Value),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

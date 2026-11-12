@@ -16,6 +16,7 @@
 #include <vector>
 
 namespace fs = std::filesystem;
+void encore_register_diagnostic_sources();
 namespace {
 thread_local std::string last_error;
 struct Engine;
@@ -66,6 +67,10 @@ struct Engine {
         }
         width = height = 0;
         ++epoch;
+        if (callback) {
+            ec_packet reset{}; reset.stream = UINT32_MAX;
+            callback(context, &reset);
+        }
     }
 
     void clear_capture() {
@@ -229,13 +234,25 @@ struct Engine {
             OBSDataAutoRelease saved = obs_data_create_from_json_file(file.c_str());
             if (saved) obs_data_apply(settings, saved);
         }
-        encore::platform_video_settings(settings, target);
-        video = obs_source_create(encore::platform_video_source(), "Encore selected window", settings, nullptr);
+        const bool diagnostic = obs_data_get_bool(config, "diagnostic_source");
+        if (!diagnostic) encore::platform_video_settings(settings, target);
+        video = obs_source_create(diagnostic ? "encore_test_video" : encore::platform_video_source(), "Encore selected window", settings, nullptr);
         if (!video) throw std::runtime_error("Could not capture the selected window. Check Screen Recording permissions or the desktop portal.");
         obs_source_set_audio_mixers(video, 0);
         scene = obs_scene_create_private("Encore scene");
         if (!scene || !obs_scene_add(scene, video)) throw std::runtime_error("Could not create the capture scene");
         obs_set_output_source(0, obs_scene_get_source(scene));
+        if (diagnostic) {
+            for (unsigned i = 0; i < 3; ++i) {
+                OBSDataAutoRelease tone = obs_data_create();
+                obs_data_set_int(tone, "frequency", 440 + 220 * i);
+                audio[i] = obs_source_create("encore_test_tone", ("Diagnostic tone " + std::to_string(i)).c_str(), tone, nullptr);
+                if (!audio[i]) throw std::runtime_error("Could not create diagnostic audio");
+                obs_source_set_audio_mixers(audio[i], 1u << i);
+                obs_set_output_source(i + 1, audio[i]);
+            }
+            return;
+        }
         const bool app_audio = std::string(obs_data_get_string(config, "audio_mode")) == "Applications";
         if (app_audio) {
             if (obs_data_get_bool(config, "game_audio_enabled")) create_audio(0, target.id, true);
@@ -255,7 +272,9 @@ struct Engine {
         const auto now = std::chrono::steady_clock::now();
         if (now < next_poll) return;
         next_poll = now + std::chrono::milliseconds(250);
-        if (encore::platform_is_wayland()) {
+        if (obs_data_get_bool(config, "diagnostic_source")) {
+            if (!video) create_capture({"diagnostic", "Diagnostic source"});
+        } else if (encore::platform_is_wayland()) {
             if (std::string(obs_data_get_string(config, "mode")) == "ActiveWindow")
                 throw std::runtime_error("Wayland requires selecting a window through the system sharing dialog; following arbitrary focused windows is unavailable.");
             if (!video) create_capture({"selected-window", "Selected window"});
@@ -368,6 +387,7 @@ extern "C" void *ec_create(const char *runtime, ec_packet_callback packet, void 
         info.start = output_start; info.stop = output_stop; info.encoded_packet = output_packet;
         info.encoded_video_codecs = "h264"; info.encoded_audio_codecs = "aac";
         obs_register_output(&info);
+        encore_register_diagnostic_sources();
         load_modules(engine->runtime);
         return engine.release();
     } catch (const std::exception &error) { last_error = error.what(); return nullptr; }

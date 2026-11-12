@@ -12,7 +12,7 @@ if(NOT TARGET OBS::libobs)
   add_library(OBS::libobs ALIAS PkgConfig::LIBOBS)
 endif()
 
-add_library(encore_capture SHARED engine.cpp mux.cpp)
+add_library(encore_capture SHARED engine.cpp mux.cpp diagnostic-sources.cpp)
 target_link_libraries(encore_capture PRIVATE OBS::libobs PkgConfig::FFMPEG)
 target_compile_options(encore_capture PRIVATE -Wall -Wextra -Wpedantic)
 if(APPLE)

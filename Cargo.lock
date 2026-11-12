@@ -827,6 +827,7 @@ dependencies = [
  "encore-common",
  "encore-encode",
  "global-hotkey",
+ "libloading 0.8.9",
  "serde_json",
  "tauri-winres",
  "wasapi",

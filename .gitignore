@@ -37,6 +37,7 @@ tools/*.exe
 tools/*.dll
 tools/ffmpeg
 tools/ffmpeg-libs/
+tools/obs-runtime/
 packaging/flatpak/input/
 .flatpak-builder/
 __pycache__/

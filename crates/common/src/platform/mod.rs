@@ -52,6 +52,46 @@ pub fn set_resource_dir(path: PathBuf) {
     let _ = RESOURCE_DIR.set(path);
 }
 
+/// Locate the bundled native engine without depending on an installed OBS frontend.
+pub fn native_runtime() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    let library = if cfg!(target_os = "macos") {
+        "libencore_capture.dylib"
+    } else {
+        "libencore_capture.so"
+    };
+    let valid = |path: &Path| path.join("lib").join(library).is_file();
+    if let Some(path) = std::env::var_os("ENCORE_NATIVE_RUNTIME").map(PathBuf::from) {
+        if valid(&path) {
+            return Some(path);
+        }
+    }
+    if let Some(resources) = RESOURCE_DIR.get() {
+        let path = resources.join("obs-runtime");
+        if valid(&path) {
+            return Some(path);
+        }
+    }
+    if let Ok(executable) = std::env::current_exe() {
+        for ancestor in executable.ancestors().skip(1) {
+            for relative in [
+                "obs-runtime",
+                "resources/obs-runtime",
+                "tools/obs-runtime",
+                "../Resources/obs-runtime",
+            ] {
+                let path = ancestor.join(relative);
+                if valid(&path) {
+                    return Some(path);
+                }
+            }
+        }
+    }
+    None
+}
+
 pub fn ffmpeg_path() -> PathBuf {
     let name = if cfg!(windows) {
         "ffmpeg.exe"

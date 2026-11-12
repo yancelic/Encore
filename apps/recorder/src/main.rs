@@ -14,8 +14,10 @@ fn main() {
     windows_runtime::main();
 }
 
-#[cfg(not(windows))]
+#[cfg(unix)]
+mod native;
+
+#[cfg(unix)]
 fn main() {
-    eprintln!("Encore recording is not available on this platform yet. The library and editor can be opened with encore-ui.");
-    std::process::exit(1);
+    native::main();
 }
