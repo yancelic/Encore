@@ -1,0 +1,17 @@
+{
+  "bundle": {
+    "targets": [
+      "app",
+      "dmg"
+    ],
+    "createUpdaterArtifacts": false,
+    "resources": {
+      "../../../tools/ffmpeg": "ffmpeg",
+      "../../../tools/ffmpeg-libs/": "ffmpeg-libs/"
+    },
+    "macOS": {
+      "minimumSystemVersion": "15.0",
+      "signingIdentity": "-"
+    }
+  }
+}

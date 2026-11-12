@@ -1,3 +1,5 @@
+#![cfg(windows)]
+
 use tauri_plugin_updater::UpdaterExt;
 
 /// Run after bundling: verifies the release against the exact public key shipped in-app.

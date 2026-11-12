@@ -1,0 +1,106 @@
+name: Platform checks
+
+on:
+  push:
+    branches: [dev]
+    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'apps/**', 'packaging/**', '.github/workflows/platform-checks.yml']
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+    inputs:
+      build_previews:
+        description: Build macOS ARM64, Ubuntu and Flatpak development artifacts
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: platforms-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_BUILD_JOBS: 2
+
+jobs:
+  native:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: Windows regression
+            os: windows-2022
+          - name: Apple Silicon
+            os: macos-15
+          - name: Ubuntu 24.04 x64
+            os: ubuntu-24.04
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Install Ubuntu dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libxdo-dev ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad
+      - name: Prepare Apple Silicon FFmpeg
+        if: runner.os == 'macOS'
+        run: |
+          test "$(uname -m)" = arm64
+          brew install ffmpeg
+          python3 apps/ui/scripts/prepare-macos-ffmpeg.py
+      - name: Prepare Windows FFmpeg and recorder resource
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          choco install ffmpeg --no-progress -y
+          New-Item -ItemType Directory -Force tools | Out-Null
+          $ffmpegBinary = Get-ChildItem 'C:\ProgramData\chocolatey\lib\ffmpeg\tools' -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $ffmpegBinary) { throw 'FFmpeg executable not found' }
+          Copy-Item -LiteralPath $ffmpegBinary.FullName -Destination tools/ffmpeg.exe
+          cargo build --locked --release -p encore-recorder
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - run: npm --prefix apps/ui ci
+      - run: npm --prefix apps/ui run build
+      - run: npm --prefix apps/ui run test:updates
+      - name: Check the entire native workspace
+        run: cargo check --locked --workspace --all-targets
+      - name: Test replay, media processing, and configuration
+        run: cargo test --locked -p encore-common -p encore-encode -p encore-clipstore -p encore-editor
+      - name: Test library backend
+        run: cargo test --locked -p encore-ui --lib
+      - name: Build development packages
+        if: github.event_name == 'workflow_dispatch' && inputs.build_previews && runner.os != 'Windows'
+        run: npm --prefix apps/ui run build:preview
+      - name: Check bundled macOS FFmpeg
+        if: github.event_name == 'workflow_dispatch' && inputs.build_previews && runner.os == 'macOS'
+        run: |
+          file target/release/bundle/macos/Encore.app/Contents/MacOS/encore-ui
+          target/release/bundle/macos/Encore.app/Contents/Resources/ffmpeg -version
+      - name: Build Flatpak development bundle
+        if: github.event_name == 'workflow_dispatch' && inputs.build_previews && runner.os == 'Linux'
+        run: |
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          bash packaging/flatpak/build.sh
+          flatpak install --user -y target/Encore-linux-x86_64-dev.flatpak
+          flatpak run --command=ffmpeg com.encore.clipper -version
+      - uses: actions/upload-artifact@v4
+        if: github.event_name == 'workflow_dispatch' && inputs.build_previews && runner.os != 'Windows'
+        with:
+          name: encore-preview-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/deb/*.deb
+            target/*-dev.flatpak
+          if-no-files-found: error
+          retention-days: 14

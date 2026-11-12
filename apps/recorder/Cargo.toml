@@ -19,6 +19,7 @@ InternalName = "encore-recorder"
 [dependencies]
 encore-common = { path = "../../crates/common" }
 encore-encode = { path = "../../crates/encode" }
+[target.'cfg(windows)'.dependencies]
 global-hotkey = "0.10.0"
 serde_json = "1.0.154"
 wasapi = "0.27.0"

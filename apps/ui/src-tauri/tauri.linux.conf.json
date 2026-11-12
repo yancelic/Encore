@@ -1,0 +1,18 @@
+{
+  "bundle": {
+    "targets": [
+      "deb"
+    ],
+    "createUpdaterArtifacts": false,
+    "linux": {
+      "deb": {
+        "depends": [
+          "ffmpeg",
+          "gstreamer1.0-libav",
+          "gstreamer1.0-plugins-good",
+          "gstreamer1.0-plugins-bad"
+        ]
+      }
+    }
+  }
+}

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Encore
+Comment=Browse, edit and export game clips
+Exec=encore-ui
+Icon=com.encore.clipper
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+StartupWMClass=encore-ui

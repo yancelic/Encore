@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "pretest:ui": "npm run build",
     "test:ui": "playwright test",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:preview": "node scripts/build-preview.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

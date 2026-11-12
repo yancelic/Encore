@@ -799,6 +799,7 @@ dependencies = [
 name = "encore-common"
 version = "0.5.0"
 dependencies = [
+ "dirs",
  "global-hotkey",
  "serde",
  "serde_json",
@@ -810,6 +811,7 @@ dependencies = [
 name = "encore-editor"
 version = "0.5.0"
 dependencies = [
+ "encore-common",
  "windows",
 ]
 

@@ -25,18 +25,18 @@
       "csp": "default-src 'self'; img-src 'self' asset: http://asset.localhost https://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost https://asset.localhost blob:; style-src 'self' 'unsafe-inline';",
       "assetProtocol": {
         "enable": true,
-        "scope": ["**"]
+        "scope": [
+          "**"
+        ]
       }
     }
   },
   "bundle": {
     "active": true,
-    "createUpdaterArtifacts": true,
-    "targets": ["nsis"],
     "publisher": "Encore",
     "copyright": "Copyright (C) 2026 Encore Contributors (GPL-3.0)",
-    "shortDescription": "Low-overhead Windows game clipping and multi-track replay studio",
-    "longDescription": "Encore is a low-overhead Windows game clipping and multi-track replay studio built with Rust and Tauri 2.",
+    "shortDescription": "Game clipping and multi-track replay studio",
+    "longDescription": "Encore is a game clipping and multi-track replay studio built with Rust and Tauri 2.",
     "homepage": "https://github.com/yancelic/Encore",
     "icon": [
       "icons/32x32.png",
@@ -45,22 +45,8 @@
       "icons/icon.ico",
       "icons/icon.png"
     ],
-    "resources": {
-      "../../../tools/ffmpeg.exe": "ffmpeg.exe",
-      "../../../target/release/encore-recorder.exe": "encore-recorder.exe"
-    },
-    "windows": {
-      "nsis": {
-        "compression": "zlib",
-        "installMode": "currentUser"
-      }
-    }
-  },
-  "plugins": {
-    "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzRURBMTU2MDRCQTg1NjIKUldSaWhib0VWcUh0WTFYVnBNTUQ1UzJYTElWZ01WZUtBcHFpcVlIRkJjU2I5b21qaWc3Z3I0eHUK",
-      "endpoints": ["https://github.com/yancelic/Encore/releases/latest/download/latest.json"],
-      "windows": { "installMode": "passive" }
-    }
+    "targets": [
+      "app"
+    ]
   }
 }

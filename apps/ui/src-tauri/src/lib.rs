@@ -1,10 +1,20 @@
 //! Tauri backend exposing Encore recorder IPC, config/autostart, clip library, waveforms, and editor commands.
 mod tray;
 mod lifecycle;
+#[cfg(windows)]
+#[path = "platform/windows/updater.rs"]
 mod updater;
+#[cfg(not(windows))]
+#[path = "platform/portable/updater.rs"]
+mod updater;
+#[cfg(windows)]
+#[path = "platform/windows/game_picker.rs"]
+mod game_picker;
+#[cfg(not(windows))]
+#[path = "platform/portable/game_picker.rs"]
 mod game_picker;
 
-use std::os::windows::process::CommandExt;
+use encore_common::platform::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
@@ -20,7 +30,6 @@ use encore_editor::{
 };
 use tauri::{AppHandle, Manager, State};
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 pub struct AppState {
     pub store: Arc<Mutex<ClipStore>>,
@@ -108,7 +117,7 @@ pub fn extract_track_audio_files(
                 .arg(src)
                 .args(["-map", &map_arg, "-vn", "-c:a", "copy"])
                 .arg(&dst)
-                .creation_flags(CREATE_NO_WINDOW)
+                .background()
                 .stdout(Stdio::null())
                 .stderr(Stdio::null())
                 .status()
@@ -156,6 +165,9 @@ async fn get_recorder_status() -> Option<RecorderStatus> {
 }
 
 pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
+    if !encore_common::platform::capabilities().recording {
+        return Err(encore_common::platform::RECORDING_UNAVAILABLE.into());
+    }
     if matches!(ipc::send_request(&IpcRequest::GetStatus), Ok(IpcResponse::Status(_))) {
         let _ = ipc::send_request(&IpcRequest::SetTrayVisible(true));
         return Ok(());
@@ -163,7 +175,7 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
     let exe = find_recorder_exe(res_dir)
         .ok_or_else(|| "Could not find encore-recorder.exe".to_string())?;
     let mut child = Command::new(&exe)
-        .creation_flags(CREATE_NO_WINDOW)
+        .background()
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
@@ -245,14 +257,17 @@ async fn pick_game_executable() -> Result<Option<String>, String> {
 #[tauri::command]
 fn get_config() -> Config {
     let mut cfg = Config::load();
-    cfg.start_with_windows = cfg.start_with_windows || autostart::is_autostart_enabled();
+    cfg.start_with_windows = encore_common::platform::capabilities().autostart
+        && (cfg.start_with_windows || autostart::is_autostart_enabled());
     cfg
 }
 
 #[tauri::command]
 async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
-    encore_common::validate_hotkey(&cfg.hotkey)?;
-    cfg.validate_audio()?;
+    if encore_common::platform::capabilities().recording {
+        encore_common::validate_hotkey(&cfg.hotkey)?;
+        cfg.validate_audio()?;
+    }
     let res_dir = app.path().resource_dir().ok();
     run_blocking(move || {
         let prev_cfg = Config::load();
@@ -260,7 +275,7 @@ async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
         cfg.save().map_err(|e| e.to_string())?;
         let target_exe = find_recorder_exe(res_dir.as_deref())
             .or_else(|| std::env::current_exe().ok());
-        if let Some(exe) = target_exe {
+        if let Some(exe) = target_exe.filter(|_| encore_common::platform::capabilities().autostart) {
             autostart::set_autostart(&exe, cfg.start_with_windows)
                 .map_err(|e| format!("Failed updating startup setting: {e}"))?;
         }
@@ -536,17 +551,19 @@ async fn copy_clip_to_clipboard(
 
 #[tauri::command]
 fn reveal_in_explorer(path: String) -> Result<(), String> {
-    let arg = format!("/select,{path}");
-    Command::new("explorer.exe")
-        .arg(arg)
-        .spawn()
-        .map_err(|e| format!("failed to launch explorer: {e}"))?;
-    Ok(())
+    encore_common::platform::reveal_path(Path::new(&path))
 }
 
+#[tauri::command]
+fn get_platform_capabilities() -> encore_common::platform::PlatformCapabilities {
+    encore_common::platform::capabilities()
+}
+
+#[cfg(windows)]
 const APP_ICO: &[u8] = include_bytes!("../icons/icon.ico");
 
 /// Select the PNG/DIB slice inside an `.ico` payload whose dimension best matches `target_px`.
+#[cfg(windows)]
 fn pick_ico_entry(ico: &[u8], target_px: u32) -> Option<&[u8]> {
     if ico.len() < 6 || u16::from_le_bytes([ico[0], ico[1]]) != 0 || u16::from_le_bytes([ico[2], ico[3]]) != 1 {
         return None;
@@ -614,11 +631,16 @@ pub fn run() {
         return;
     };
     let state = AppState::open().expect("failed to open Encore clip database");
-    tauri::Builder::default()
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    let builder = tauri::Builder::default();
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .manage(updater::UpdateState::default())
         .manage(state)
         .setup(move |app| {
+            if let Ok(resources) = app.path().resource_dir() {
+                encore_common::platform::set_resource_dir(resources);
+            }
             #[cfg(windows)]
             apply_windows_taskbar_icon(app.handle());
             #[cfg(windows)]
@@ -653,6 +675,7 @@ pub fn run() {
             list_audio_applications,
             list_capture_applications,
             pick_game_executable,
+            get_platform_capabilities,
             get_config,
             save_config,
             pick_clips_folder,
@@ -676,16 +699,7 @@ pub fn run() {
 mod tests {
     use super::*;
 
-    fn test_ffmpeg() -> PathBuf {
-        let p = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("..")
-            .join("tools")
-            .join("ffmpeg.exe");
-        assert!(p.exists(), "missing tools/ffmpeg.exe");
-        p
-    }
+    fn test_ffmpeg() -> PathBuf { encore_common::ffmpeg_path() }
 
     #[test]
     fn unique_output_path_avoids_collisions() {
@@ -734,7 +748,7 @@ mod tests {
             assert!(std::fs::metadata(&f).unwrap().len() > 200);
         }
 
-        assert!(!ipc::list_audio_devices().is_empty());
+        // Audio endpoint availability belongs to capture integration tests, not media extraction.
         let _ = std::fs::remove_dir_all(&dir);
     }
 

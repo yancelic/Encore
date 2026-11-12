@@ -1,6 +1,6 @@
 # Encore in-app updates
 
-The UI checks once per launch, and Settings → App updates offers a manual check.
+The UI checks once per launch, and Settings â†’ App updates offers a manual check.
 There is no updater timer, service, or dependency in `encore-recorder`. No package
 is downloaded until the user confirms **Update and restart**. Offline checks leave
 capture and the library usable; Settings shows the error and lets the user retry.
@@ -31,7 +31,7 @@ or commit it, put it in the frontend, or include it in release assets.
 Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for a password-protected key. The initial
 local key has no password and relies on the security of this Windows account and
 the checkout. For CI, store these values in encrypted secrets and provision FFmpeg
-as with a normal build. The updater public key is committed in `tauri.conf.json`.
+as with a normal build. The Windows updater public key is committed in `tauri.windows.conf.json`.
 This update signature is separate from optional Windows Authenticode signing.
 
 ## Publish each release

@@ -1,3 +1,4 @@
+import { usePlatform } from './platform';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { isTauriEnv } from './api';
@@ -14,6 +15,7 @@ export type UpdateProgress =
 type Phase = 'idle' | 'checking' | 'available' | 'upToDate' | 'error' | UpdateProgress['phase'];
 
 export function useUpdater() {
+  const platform = usePlatform();
   const [phase, setPhase] = useState<Phase>('idle');
   const [update, setUpdate] = useState<AvailableUpdate | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -24,7 +26,7 @@ export function useUpdater() {
   const checkedOnLaunch = useRef(false);
 
   const check = useCallback(async () => {
-    if (operation.current) return;
+    if (!platform.updates || operation.current) return;
     operation.current = true;
     setPhase('checking');
     setError(null);
@@ -40,14 +42,14 @@ export function useUpdater() {
     } finally {
       operation.current = false;
     }
-  }, []);
+  }, [platform.updates]);
 
   useEffect(() => {
     // No interval, background service or duplicate StrictMode launch check.
-    if (checkedOnLaunch.current || !isTauriEnv()) return;
+    if (!platform.updates || checkedOnLaunch.current || !isTauriEnv()) return;
     checkedOnLaunch.current = true;
     void check();
-  }, [check]);
+  }, [check, platform.updates]);
 
   const install = async () => {
     if (!update || operation.current) return;

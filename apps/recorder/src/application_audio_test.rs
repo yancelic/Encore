@@ -8,7 +8,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex};
 use std::time::{Duration, Instant};
 
-const FIXTURE: &str = "application_audio_test::application_audio_fixture";
+const FIXTURE: &str = "windows_runtime::application_audio_test::application_audio_fixture";
 
 struct OwnedChild(Child);
 impl Drop for OwnedChild {

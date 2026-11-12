@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { usePlatform } from '../platform';
+import { useCallback, useEffect, useState } from 'react';
 import {
   FolderOpen,
   Keyboard,
@@ -160,6 +161,7 @@ export function SettingsModal({
   onClose,
   onSave,
 }: SettingsModalProps) {
+  const platform = usePlatform();
   const [draft, setDraft] = useState<Config>({
     ...config,
     audio_mode: config.audio_mode ?? 'Devices',
@@ -174,16 +176,18 @@ export function SettingsModal({
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!platform.recording) return;
     listAudioDevices()
       .then(setDevices)
       .catch(() => setDevices([]));
-  }, []);
+  }, [platform.recording]);
 
-  const refreshApplications = () => {
+  const refreshApplications = useCallback(() => {
+    if (!platform.recording) return;
     setApplicationsError(false);
     listAudioApplications().then(setApplications).catch(() => setApplicationsError(true));
-  };
-  useEffect(refreshApplications, []);
+  }, [platform.recording]);
+  useEffect(refreshApplications, [refreshApplications]);
 
   useEffect(() => {
     if (!recordingKey) return;
@@ -300,11 +304,15 @@ export function SettingsModal({
               </div>
             </fieldset>
             <p className="appearance-help">
-              System follows your Windows appearance. Theme changes apply
+              System follows your device appearance. Theme changes apply
               immediately.
             </p>
           </section>
           <UpdateSettings updater={updater} />
+          {!platform.recording && <p className="capture-mode-help" role="status">
+            Recording is not available in this preview yet. Choose a clips folder to browse, edit and export existing MP4 files.
+          </p>}
+          {platform.recording && <>
           <div className="settings-grid">
             <section className="settings-section">
               <h3>Video capture</h3>
@@ -604,6 +612,7 @@ export function SettingsModal({
             {audioWarnings?.filter(Boolean).map((message, i) => <p key={i} className="audio-routing-note" role="status">Current recorder: {message}</p>)}
           </section>
 
+          </>}
           <section className="settings-section">
             <h3>
               <label htmlFor="clips-folder">Clips folder</label>
@@ -625,7 +634,7 @@ export function SettingsModal({
             </div>
           </section>
 
-          <section className="settings-section">
+          {platform.recording && <section className="settings-section">
             <h3>Games to capture ({draft.games.length})</h3>
             <div className="games-chips">
               {draft.games.map((g) => (
@@ -650,7 +659,7 @@ export function SettingsModal({
             <GamePicker games={draft.games} onAdd={(exe) => setDraft((d) =>
               d.games.some((game) => game.toLowerCase() === exe.toLowerCase())
                 ? d : { ...d, games: [...d.games, exe] })} />
-          </section>
+          </section>}
         </fieldset>
       </div>
 
@@ -660,7 +669,7 @@ export function SettingsModal({
         </button>
         <button
           className="btn-primary"
-          disabled={busy || chatInvalid || (draft.audio_mode === 'Applications' && !applications?.supported)}
+          disabled={busy || (platform.recording && (chatInvalid || (draft.audio_mode === 'Applications' && !applications?.supported)))}
           onClick={() => onSave(draft)}
         >
           {busy ? 'Applying…' : 'Save settings'}

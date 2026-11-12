@@ -1,3 +1,4 @@
+import { usePlatform } from '../platform';
 import { useMemo, useState } from 'react';
 import {
   Check,
@@ -67,6 +68,7 @@ export function LibraryView({
   onDeleteClip,
   onCreateMontage,
 }: LibraryViewProps) {
+  const platform = usePlatform();
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [montageMode, setMontageMode] = useState(false);
   const [selectedClips, setSelectedClips] = useState<ClipRecord[]>([]);
@@ -128,9 +130,9 @@ export function LibraryView({
     <div className="clip-actions">
       <button
         className={`btn-chip ${copiedId === clip.id ? 'copied' : ''}`}
-        disabled={copyingId !== null}
+        disabled={copyingId !== null || platform.os === 'linux'}
         onClick={() => copyClip(clip)}
-        title="Copy clip file to clipboard"
+        title={platform.os === 'linux' ? 'Use Show in folder to share clips in this preview' : 'Copy clip file to clipboard'}
       >
         {copiedId === clip.id ? (
           <Check size={14} />
@@ -142,8 +144,8 @@ export function LibraryView({
       <button
         className="btn-chip"
         onClick={() => onRevealClip(clip)}
-        title="Show in Explorer"
-        aria-label={`Show ${clip.title} in Explorer`}
+        title="Show in folder"
+        aria-label={`Show ${clip.title} in folder`}
       >
         <FolderOpen size={14} />
       </button>
@@ -239,7 +241,7 @@ export function LibraryView({
           </p>
           <div className="storage-note" title={clipsDir}>
             <FolderOpen size={14} />
-            <span>Saved on this PC</span>
+            <span>Saved on this device</span>
           </div>
         </div>
       </aside>
@@ -370,6 +372,8 @@ export function LibraryView({
               <p>
                 {filtered ? (
                   'Try another search or clear your filters to see more replays.'
+                ) : !platform.recording ? (
+                  'Choose your clips folder in Settings, then add MP4 files to browse and edit them here.'
                 ) : (
                   <>
                     Press <kbd>{hotkey}</kbd> while playing to save what just
@@ -509,7 +513,7 @@ export function LibraryView({
         <footer className="library-footer">
           <span>Keep the play. Cut the rest.</span>
           <span>
-            Save a moment <kbd>{hotkey}</kbd>
+            {platform.recording ? <>Save a moment <kbd>{hotkey}</kbd></> : 'Library & editor preview'}
           </span>
         </footer>
       </div>

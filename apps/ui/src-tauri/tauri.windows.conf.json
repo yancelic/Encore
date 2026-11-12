@@ -1,0 +1,29 @@
+{
+  "bundle": {
+    "targets": [
+      "nsis"
+    ],
+    "resources": {
+      "../../../tools/ffmpeg.exe": "ffmpeg.exe",
+      "../../../target/release/encore-recorder.exe": "encore-recorder.exe"
+    },
+    "windows": {
+      "nsis": {
+        "compression": "zlib",
+        "installMode": "currentUser"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDYzRURBMTU2MDRCQTg1NjIKUldSaWhib0VWcUh0WTFYVnBNTUQ1UzJYTElWZ01WZUtBcHFpcVlIRkJjU2I5b21qaWc3Z3I0eHUK",
+      "endpoints": [
+        "https://github.com/yancelic/Encore/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

@@ -61,7 +61,7 @@ declare global {
 /** The bridge only exists inside the test browser. Nothing is added to app code. */
 export async function mockDesktop(
   page: Page,
-  options: { empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
+  options: { platform?: 'windows' | 'macos' | 'linux'; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
     shareError?: boolean; shareDelay?: number } = {},
 ) {
@@ -123,6 +123,10 @@ export async function mockDesktop(
             case 'plugin:window|set_theme':
             case 'plugin:window|set_background_color':
               return;
+            case 'get_platform_capabilities': {
+              const os = options.platform ?? 'windows';
+              return { os, recording: os === 'windows', application_audio: os === 'windows', autostart: os === 'windows', updates: os === 'windows' };
+            }
             case 'get_config':
               return cfg;
             case 'get_recorder_status':

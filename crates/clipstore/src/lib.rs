@@ -1,6 +1,6 @@
 //! SQLite clip library index, FFmpeg metadata/thumbnail/waveform extraction, and search/filter queries.
 use std::collections::HashSet;
-use std::os::windows::process::CommandExt;
+use encore_common::platform::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::UNIX_EPOCH;
@@ -9,7 +9,6 @@ use encore_common::Config;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const WAVEFORM_BUCKETS: usize = 240;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,8 +53,11 @@ pub struct ClipStore {
 }
 
 fn stable_id(path: &Path) -> String {
-    // 64-bit FNV-1a over normalized lowercase path for deterministic cache/DB keys.
+    // Preserve legacy case-insensitive IDs on Windows and distinct Unix filenames.
+    #[cfg(windows)]
     let s = path.to_string_lossy().to_lowercase();
+    #[cfg(not(windows))]
+    let s = path.to_string_lossy();
     let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
     for b in s.as_bytes() {
         hash ^= *b as u64;
@@ -114,7 +116,7 @@ fn parse_video_dims_fps(line: &str) -> (u32, u32, f64) {
 
 fn probe_media(ffmpeg: &Path, path: &Path) -> ProbedMedia {
     let out = Command::new(ffmpeg)
-        .creation_flags(CREATE_NO_WINDOW)
+        .background()
         .args(["-hide_banner", "-i"])
         .arg(path)
         .stdout(Stdio::null())
@@ -193,7 +195,7 @@ fn generate_thumbnail(ffmpeg: &Path, src: &Path, thumb: &Path, duration_ms: u64)
     let seek_secs = if duration_ms > 3000 { 1.0 } else { (duration_ms as f64 / 3000.0).max(0.0) };
     let seek_str = format!("{seek_secs:.2}");
     let status = Command::new(ffmpeg)
-        .creation_flags(CREATE_NO_WINDOW)
+        .background()
         .args(["-y", "-ss", &seek_str, "-i"])
         .arg(src)
         .args(["-vframes", "1", "-vf", "scale=480:-2", "-q:v", "4"])
@@ -497,7 +499,7 @@ impl ClipStore {
 fn extract_track_peaks(ffmpeg: &Path, src: &Path, track_idx: u32) -> Vec<f32> {
     let map = format!("0:a:{track_idx}");
     let out = Command::new(ffmpeg)
-        .creation_flags(CREATE_NO_WINDOW)
+        .background()
         .args(["-i"])
         .arg(src)
         .args(["-map", &map, "-ac", "1", "-ar", "16000", "-f", "s16le", "pipe:1"])
@@ -532,10 +534,21 @@ fn extract_track_peaks(ffmpeg: &Path, src: &Path, track_idx: u32) -> Vec<f32> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn clip_ids_follow_platform_filename_case_rules() {
+        let upper = stable_id(Path::new("Clips/Replay.mp4"));
+        let lower = stable_id(Path::new("Clips/replay.mp4"));
+        if cfg!(windows) {
+            assert_eq!(upper, lower, "Windows IDs must remain compatible with existing libraries");
+        } else {
+            assert_ne!(upper, lower, "Distinct Unix filenames must not overwrite each other");
+        }
+    }
+
     fn test_ffmpeg() -> PathBuf {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("tools").join("ffmpeg.exe");
-        assert!(root.exists(), "missing tools/ffmpeg.exe for clipstore test");
-        root
+        let ff = encore_common::ffmpeg_path();
+        assert!(Command::new(&ff).arg("-version").output().is_ok(), "FFmpeg is required for media tests");
+        ff
     }
 
     #[test]
