@@ -16,3 +16,11 @@ References inspected: OBS Studio 32.0.4, commit
 `dcdbd2e9048ae66237fdab32dbba72b745b1b9c5`, particularly libobs output/encoder APIs,
 mac-capture, linux-pipewire, and linux-capture. OBS sources carry GPL-2.0-or-later
 notices. The Encore integration code in this directory is GPL-3.0-only.
+
+Additional macOS design reference: [OpenScreenStudio](https://github.com/Glyph-Software/OpenScreenStudio/tree/9b257aca7c44d7a3da5034fb72658e3b0cf2d35a),
+especially its application privacy descriptions and permission-before-capture
+flow. That project is AGPL-3.0. Its implementation is not incorporated here;
+Encore's permission guards and bundle changes are independently implemented
+using the public Apple APIs. The main app and its background helper both declare
+their microphone/screen usage because macOS can attribute child-process access
+to the responsible application.

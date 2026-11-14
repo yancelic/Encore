@@ -370,7 +370,10 @@ struct Engine {
                 if (video) clear_capture();
                 return;
             }
-            if (!video || target.window != chosen->window || target.id != chosen->id) create_capture(*chosen);
+            if (!video || target.window != chosen->window || target.id != chosen->id) {
+                if (!encore::platform_video_ready(error)) return;
+                create_capture(*chosen);
+            }
         }
         if (!video) return;
         if (!obs_data_get_bool(config, "diagnostic_source") && std::string(obs_data_get_string(config, "audio_mode")) == "Applications") {
@@ -513,7 +516,7 @@ void load_modules(const fs::path &runtime) {
     for (auto *name : safe_modules) obs_add_safe_module(name);
     if (!runtime.empty()) {
         obs_add_data_path((runtime / "share/obs/libobs").c_str());
-        obs_add_module_path((runtime / "lib/obs-plugins/%module%.so").c_str(), (runtime / "share/obs/obs-plugins/%module%").c_str());
+        obs_add_module_path((runtime / "lib/obs-plugins").c_str(), (runtime / "share/obs/obs-plugins/%module%").c_str());
         const auto plugins = runtime / "Contents/PlugIns";
         if (fs::is_directory(plugins)) {
             obs_add_data_path((runtime / "Contents/Frameworks/libobs.framework/Resources").c_str());
@@ -524,6 +527,20 @@ void load_modules(const fs::path &runtime) {
                 if (obs_open_module(&module, (entry.path() / "Contents/MacOS" / name).c_str(), (entry.path() / "Contents/Resources").c_str()) == MODULE_SUCCESS)
                     obs_init_module(module);
             }
+        }
+        const auto modules = runtime / "lib/obs-plugins";
+        if (fs::is_directory(modules)) {
+            for (const auto *name : safe_modules) {
+                const auto binary = modules / (std::string(name) + ".so");
+                if (!fs::is_regular_file(binary)) continue;
+                obs_module_t *module = nullptr;
+                if (obs_open_module(&module, binary.c_str(), (runtime / "share/obs/obs-plugins" / name).c_str()) == MODULE_SUCCESS)
+                    obs_init_module(module);
+            }
+        }
+        if (fs::is_directory(modules) || fs::is_directory(plugins)) {
+            obs_post_load_modules();
+            return; // Bundled engines must not pick up unrelated host OBS plugins.
         }
     }
     obs_load_all_modules();
@@ -543,6 +560,8 @@ extern "C" void *ec_create(const char *runtime, ec_packet_callback packet, void 
         if (!encore::platform_init(engine->error)) throw std::runtime_error(engine->error);
         if (!obs_startup("en-US", nullptr, nullptr)) throw std::runtime_error("Could not start libobs");
         engine->core_started = true;
+        obs_add_data_path((fs::path(engine->runtime) / "share/obs/libobs").c_str());
+        obs_add_data_path((fs::path(engine->runtime) / "Contents/Frameworks/libobs.framework/Resources").c_str());
         obs_audio_info audio{48000, SPEAKERS_STEREO};
         if (!obs_reset_audio(&audio)) throw std::runtime_error("Could not initialize 48 kHz audio");
         engine->config = obs_data_create();

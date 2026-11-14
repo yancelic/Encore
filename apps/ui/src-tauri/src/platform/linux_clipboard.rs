@@ -24,7 +24,7 @@ impl Transfer {
         let transfer = Self { connection, key };
         let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
         let descriptors = gio::UnixFDList::new();
-        let index = descriptors.append(&file).map_err(|e| e.to_string())?;
+        let index = descriptors.append(file).map_err(|e| e.to_string())?;
         let options = HashMap::<String, glib::Variant>::new();
         let message = gio::DBusMessage::new_method_call(Some(BUS), OBJECT, Some(INTERFACE), "AddFiles");
         message.set_body(&(transfer.key.clone(), vec![glib::variant::Handle(index)], options).to_variant());

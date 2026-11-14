@@ -329,7 +329,9 @@ fn run() -> Result<(), String> {
         audio_warnings: Default::default(),
     }));
     let server = Arc::new(ipc::LocalServer::bind(ipc::PIPE_NAME)?);
+    eprintln!("Encore recorder: initializing native runtime at {}", runtime.display());
     let mut engine = ffi::Engine::open(api.clone(), &runtime, replay.clone())?;
+    eprintln!("Encore recorder: applying capture settings");
     let answer = engine.request(&configuration(&config)?)?;
     if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) {
         return Err(error.into());
@@ -352,6 +354,7 @@ fn run() -> Result<(), String> {
         libc::signal(libc::SIGTERM, terminate as *const () as libc::sighandler_t);
         libc::signal(libc::SIGINT, terminate as *const () as libc::sighandler_t);
     }
+    eprintln!("Encore recorder: background service ready (pid {})", std::process::id());
     while !stop.load(Ordering::Acquire) && !TERMINATE.load(Ordering::Acquire) {
         while let Ok(control) = receiver.try_recv() {
             handle_control(
@@ -468,7 +471,12 @@ fn open_library() -> Result<(), String> {
 
 pub fn main() {
     let arguments: Vec<_> = std::env::args().collect();
-    let result = if arguments.get(1).map(String::as_str) == Some("--autostart") {
+    let result = if arguments.get(1).map(String::as_str) == Some("--idle-self-test") {
+        match arguments.get(2) {
+            Some(directory) => idle_self_test(PathBuf::from(directory)),
+            None => Err("Usage: encore-recorder --idle-self-test OUTPUT_DIRECTORY".into()),
+        }
+    } else if arguments.get(1).map(String::as_str) == Some("--autostart") {
         match arguments.get(2).map(String::as_str) {
             Some("yes") => background_permission(true),
             Some("no") => background_permission(false),
@@ -508,6 +516,35 @@ fn query(action: &str) -> Result<(), String> {
     // Third-party capture plugins may write directly to stdout. Frame the helper
     // response so their diagnostics cannot corrupt device discovery in the UI.
     println!("\nENCORE_QUERY {}", engine.request(&json!({"action":action}))?);
+    Ok(())
+}
+
+/// Exercise the normal Cocoa/GTK menu lifecycle without screen, microphone, or hotkey prompts.
+fn idle_self_test(directory: PathBuf) -> Result<(), String> {
+    std::fs::create_dir_all(&directory).map_err(|e| e.to_string())?;
+    let runtime = encore_common::platform::native_runtime().ok_or("Native capture runtime missing")?;
+    let name = if cfg!(target_os = "macos") { "libencore_capture.dylib" } else { "libencore_capture.so" };
+    let api = ffi::Api::load(&runtime.join("lib").join(name))?;
+    let replay = Arc::new(Mutex::new(RingBuffer::new(Duration::from_secs(1), 1024 * 1024)));
+    let mut engine = ffi::Engine::open(api, &runtime, replay)?;
+    let config = Config { games: vec![], ..Config::default() };
+    let mut request = configuration(&config)?;
+    request["config"]["state_dir"] = json!(directory);
+    request["config"]["diagnostic_no_shortcut"] = json!(true);
+    let answer = engine.request(&request)?;
+    if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
+    for step in 0..150 {
+        if step == 50 || step == 75 {
+            engine.request(&json!({"action":"tray", "visible":step == 75}))?;
+        }
+        engine.tick();
+        let status = engine.request(&json!({"action":"status"}))?;
+        if status["recording"].as_bool() == Some(true) { return Err("Idle test unexpectedly captured content".into()); }
+        if let Some(error) = status["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
+        thread::sleep(Duration::from_millis(20));
+    }
+    drop(engine);
+    println!("{}", json!({"ok":true, "idle_menu_lifecycle":true}));
     Ok(())
 }
 

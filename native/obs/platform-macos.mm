@@ -4,6 +4,7 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <AVFoundation/AVFoundation.h>
 #include <unistd.h>
+#include <cstdio>
 
 namespace { std::string tray_action; NSStatusItem *tray = nil; NSMenuItem *tray_status = nil; }
 @interface EncoreTrayDelegate : NSObject
@@ -20,6 +21,11 @@ bool platform_init(std::string &) {
         [NSApplication sharedApplication];
         [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
         [NSApp finishLaunching];
+        NSBundle *bundle = NSBundle.mainBundle;
+        std::fprintf(stderr, "Encore macOS bundle: %s; microphone description: %s; screen description: %s\n",
+            bundle.bundleIdentifier.UTF8String ?: "(unbundled)",
+            [bundle objectForInfoDictionaryKey:@"NSMicrophoneUsageDescription"] ? "present" : "missing",
+            [bundle objectForInfoDictionaryKey:@"NSScreenCaptureUsageDescription"] ? "present" : "missing");
     }
     return true;
 }
@@ -63,6 +69,10 @@ void platform_set_tray(bool visible, bool recording) {
 }
 std::string platform_tray_action() { auto action = tray_action; tray_action.clear(); return action; }
 bool platform_microphone_ready(std::string &warning) {
+    if (![NSBundle.mainBundle objectForInfoDictionaryKey:@"NSMicrophoneUsageDescription"]) {
+        warning = "Microphone access requires the bundled Encore application. Install Encore in Applications and start its recorder from the library.";
+        return false;
+    }
     const auto permission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
     if (permission == AVAuthorizationStatusAuthorized) return true;
     if (permission == AVAuthorizationStatusNotDetermined) {
@@ -91,6 +101,16 @@ obs_data_t *platform_background_status() {
 bool platform_is_wayland() { return false; }
 const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
 const char *platform_video_source() { return "screen_capture"; }
+bool platform_video_ready(std::string &warning) {
+    static bool requested = false;
+    if (CGPreflightScreenCaptureAccess()) return true;
+    if (!requested) {
+        requested = true;
+        if (CGRequestScreenCaptureAccess()) return true;
+    }
+    warning = "Allow Encore in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the recorder to apply the permission.";
+    return false;
+}
 
 std::vector<Application> platform_applications() {
     std::vector<Application> result;
@@ -121,7 +141,6 @@ std::vector<Application> platform_applications() {
 }
 
 void platform_video_settings(obs_data_t *settings, const Application &application) {
-    if (!CGPreflightScreenCaptureAccess()) CGRequestScreenCaptureAccess();
     obs_data_set_int(settings, "type", 1); // Window stream; never substitutes the monitor.
     obs_data_set_int(settings, "window", application.window);
     obs_data_set_string(settings, "application", application.id.c_str());

@@ -32,6 +32,7 @@ def prepare():
     run('cmake', '--install', str(build))
     library_dir = Path(subprocess.check_output(['pkg-config', '--variable=libdir', 'libobs'], text=True).strip())
     data_dir = Path('/usr/share/obs')
+    shutil.copy2((library_dir / 'libobs.so.0').resolve(), runtime / 'lib/libobs.so.0')
     shutil.copytree(data_dir / 'libobs', runtime / 'share/obs/libobs', dirs_exist_ok=True)
     plugins = ['linux-capture', 'linux-pipewire', 'linux-pulseaudio', 'obs-ffmpeg', 'obs-x264']
     for name in plugins:

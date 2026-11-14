@@ -2,6 +2,7 @@
 from pathlib import Path
 import json
 import os
+import plistlib
 import shutil
 import subprocess
 import sys
@@ -17,6 +18,11 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
         subprocess.check_call(['ditto', str(root / 'target/release/bundle/macos/Encore.app'), str(app)])
         subprocess.check_call(['codesign', '--verify', '--deep', '--strict', str(app)])
         helper = app / 'Contents/Resources/Encore Recorder.app/Contents/MacOS/encore-recorder'
+        for bundle in [app, helper.parents[2]]:
+            with (bundle / 'Contents/Info.plist').open('rb') as file:
+                info = plistlib.load(file)
+            assert info.get('NSMicrophoneUsageDescription'), f'Microphone permission description missing: {bundle}'
+            assert info.get('NSScreenCaptureUsageDescription'), f'Screen capture permission description missing: {bundle}'
         framework = app / 'Contents/Resources/obs-runtime/Contents/Frameworks/libobs.framework'
         assert (framework / 'Versions/Current').is_symlink(), 'The macOS framework layout was flattened during packaging'
         # FFmpeg must come from the bundle, even with Homebrew absent from PATH.
@@ -36,6 +42,8 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
             subprocess.run(['lldb', '--batch', '-o', 'run', '-o', 'thread backtrace all', '--', *arguments],
                 cwd=directory, env=environment, timeout=30, check=False)
         raise
+    subprocess.check_call([*prefix, str(helper), '--idle-self-test', str(directory / 'idle-test')],
+        cwd=directory, env=environment, timeout=30)
     subprocess.check_call([sys.executable, str(root / 'native/obs/verify-self-test.py'),
         str(directory / 'self-test/encore-self-test.mp4')])
     query = subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],
@@ -46,4 +54,5 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
     registered = {source['id'] for source in diagnostics['sources']}
     assert diagnostics['video_source'] in registered, diagnostics
     assert diagnostics['h264_encoders'], diagnostics
+    assert ('sck_audio_capture' if sys.platform == 'darwin' else 'pipewire_audio_application_capture') in registered, diagnostics
     print(json.dumps({'ok': True, 'relocated_package': sys.platform, 'obs': diagnostics['obs_version']}))

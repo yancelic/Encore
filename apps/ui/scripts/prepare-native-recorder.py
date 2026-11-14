@@ -19,5 +19,9 @@ if sys.platform == 'darwin':
             'CFBundleShortVersionString': '0.5.0', 'LSMinimumSystemVersion': '15.0',
             'LSUIElement': True, 'NSHighResolutionCapable': True,
             'NSMicrophoneUsageDescription': 'Encore records your microphone as a separate track in saved game clips.',
+            'NSScreenCaptureUsageDescription': 'Encore captures the selected game window to keep your replay buffer ready.',
+            'NSAudioCaptureUsageDescription': 'Encore records game and chat audio in separate tracks for your clips.',
+            'NSSupportsAutomaticTermination': False, 'NSSupportsSuddenTermination': False,
         }, file)
-    subprocess.check_call(['codesign', '--force', '--sign', '-', str(helper.parent)])
+    subprocess.check_call(['codesign', '--force', '--sign', '-', '--entitlements',
+        str(root / 'apps/ui/src-tauri/entitlements.macos.plist'), str(helper.parent)])

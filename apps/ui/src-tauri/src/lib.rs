@@ -158,7 +158,8 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
         .ok_or_else(|| "Could not find the Encore recorder helper".to_string())?;
     let log_path = Config::dir().join("recorder.log");
     let _ = std::fs::create_dir_all(Config::dir());
-    let log = std::fs::File::create(&log_path).map_err(|e| format!("Cannot create recorder log: {e}"))?;
+    let log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)
+        .map_err(|e| format!("Cannot create recorder log: {e}"))?;
     let mut child = Command::new(&exe)
         .background()
         .stdin(Stdio::null())
@@ -168,6 +169,13 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
         .map_err(|e| format!("Failed to start {}: {e}", exe.display()))?;
     for _ in 0..100 {
         if matches!(ipc::send_request(&IpcRequest::GetStatus), Ok(IpcResponse::Status(_))) {
+            std::thread::spawn(move || {
+                use std::io::Write;
+                let exit = child.wait();
+                if let Ok(mut log) = std::fs::OpenOptions::new().append(true).open(&log_path) {
+                    let _ = writeln!(log, "Encore recorder process ended: {exit:?}");
+                }
+            });
             return Ok(());
         }
         if let Ok(Some(exit_status)) = child.try_wait() {
