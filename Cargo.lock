@@ -799,7 +799,9 @@ dependencies = [
 name = "encore-common"
 version = "0.5.0"
 dependencies = [
+ "dirs",
  "global-hotkey",
+ "libc",
  "serde",
  "serde_json",
  "wasapi",
@@ -810,6 +812,7 @@ dependencies = [
 name = "encore-editor"
 version = "0.5.0"
 dependencies = [
+ "encore-common",
  "windows",
 ]
 
@@ -824,6 +827,8 @@ dependencies = [
  "encore-common",
  "encore-encode",
  "global-hotkey",
+ "libc",
+ "libloading 0.8.9",
  "serde_json",
  "tauri-winres",
  "wasapi",
@@ -839,6 +844,7 @@ dependencies = [
  "encore-clipstore",
  "encore-common",
  "encore-editor",
+ "gtk",
  "rfd",
  "serde",
  "serde_json",

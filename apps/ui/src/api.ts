@@ -40,6 +40,8 @@ export const listCaptureApplications = (): Promise<CaptureApplication[]> =>
 export const pickGameExecutable = (): Promise<string | null> =>
   invoke<string | null>('pick_game_executable');
 
+export const selectCaptureSource = (): Promise<void> => invoke<void>('select_capture_source');
+
 export const getConfig = (): Promise<Config> =>
   invoke<Config>('get_config');
 

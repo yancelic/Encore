@@ -1,4 +1,5 @@
-import { useEffect, useState } from 'react';
+import { usePlatform } from '../platform';
+import { useCallback, useEffect, useState } from 'react';
 import {
   FolderOpen,
   Keyboard,
@@ -8,7 +9,7 @@ import {
   Volume2,
   X,
 } from 'lucide-react';
-import { listAudioApplications, listAudioDevices, pickClipsFolder } from '../api';
+import { listAudioApplications, listAudioDevices, pickClipsFolder, selectCaptureSource } from '../api';
 import type { ApplicationAudioOptions, AudioDeviceInfo, AudioMode, CaptureMode, Config } from '../types';
 import { Modal } from './Modal';
 import type { ThemePreference } from '../theme';
@@ -30,7 +31,7 @@ interface SettingsModalProps {
 const PRESET_BUFFER_SECS = [15, 20, 30, 45, 60, 90, 120];
 const FPS_OPTIONS = [30, 60, 120, 144, 240];
 const HEIGHT_OPTIONS: { label: string; value: number }[] = [
-  { label: 'Native (Display Resolution)', value: 0 },
+  { label: 'Native (Window Resolution)', value: 0 },
   { label: '1440p (QHD)', value: 1440 },
   { label: '1080p (Full HD)', value: 1080 },
   { label: '720p (HD)', value: 720 },
@@ -146,6 +147,7 @@ function formatKeyCombo(e: KeyboardEvent): string | null {
   if (e.ctrlKey) parts.push('Ctrl');
   if (e.altKey) parts.push('Alt');
   if (e.shiftKey) parts.push('Shift');
+  if (e.metaKey) parts.push('Super');
   parts.push(key);
   return parts.join('+');
 }
@@ -160,6 +162,7 @@ export function SettingsModal({
   onClose,
   onSave,
 }: SettingsModalProps) {
+  const platform = usePlatform();
   const [draft, setDraft] = useState<Config>({
     ...config,
     audio_mode: config.audio_mode ?? 'Devices',
@@ -172,18 +175,21 @@ export function SettingsModal({
   const [applicationsError, setApplicationsError] = useState(false);
   const [recordingKey, setRecordingKey] = useState(false);
   const [hotkeyError, setHotkeyError] = useState<string | null>(null);
+  const [captureError, setCaptureError] = useState<string | null>(null);
 
   useEffect(() => {
+    if (!platform.recording) return;
     listAudioDevices()
       .then(setDevices)
       .catch(() => setDevices([]));
-  }, []);
+  }, [platform.recording]);
 
-  const refreshApplications = () => {
+  const refreshApplications = useCallback(() => {
+    if (!platform.recording) return;
     setApplicationsError(false);
     listAudioApplications().then(setApplications).catch(() => setApplicationsError(true));
-  };
-  useEffect(refreshApplications, []);
+  }, [platform.recording]);
+  useEffect(refreshApplications, [refreshApplications]);
 
   useEffect(() => {
     if (!recordingKey) return;
@@ -236,7 +242,8 @@ export function SettingsModal({
     && draft.audio_device !== 'off' && !!outputName(draft.audio_device)
     && outputName(draft.audio_device) === outputName(draft.chat_device);
   const chatInvalid = draft.audio_mode === 'Applications' && !!draft.chat_application
-    && (!/\.exe$/i.test(draft.chat_application) || /[\\/:*?"<>|\x00-\x1f]/.test(draft.chat_application));
+    && (/[\\/\x00-\x1f]/.test(draft.chat_application) || (platform.os === 'windows'
+      && (!/\.exe$/i.test(draft.chat_application) || /[:*?"<>|]/.test(draft.chat_application))));
 
   const handleBrowseFolder = async () => {
     const picked = await pickClipsFolder(draft.clips_dir);
@@ -300,11 +307,15 @@ export function SettingsModal({
               </div>
             </fieldset>
             <p className="appearance-help">
-              System follows your Windows appearance. Theme changes apply
+              System follows your device appearance. Theme changes apply
               immediately.
             </p>
           </section>
           <UpdateSettings updater={updater} />
+          {!platform.recording && <p className="capture-mode-help" role="status">
+            Recording is not available in this preview yet. Choose a clips folder to browse, edit and export existing MP4 files.
+          </p>}
+          {platform.recording && <>
           <div className="settings-grid">
             <section className="settings-section">
               <h3>Video capture</h3>
@@ -323,18 +334,23 @@ export function SettingsModal({
                     }
                   >
                     <option value="GameDetection">
-                      Game Detection (Recommended)
+                      {platform.portal_capture ? 'Selected Window (System Sharing Dialog)' : 'Game Detection (Recommended)'}
                     </option>
-                    <option value="ActiveWindow">
+                    <option value="ActiveWindow" disabled={platform.portal_capture}>
                       Active Window (Follows Focus)
                     </option>
                   </select>
                 </div>
                 <p id="capture-mode-help" className="capture-mode-help">
-                  {draft.mode === 'GameDetection'
+                  {platform.portal_capture ? 'Choose a window in the system sharing dialog. Encore keeps recording that window when you switch apps. Your desktop controls which windows can be shared.' : draft.mode === 'GameDetection'
                     ? 'Records only the game window and stays on it when you switch apps. Minimizing pauses capture; restoring starts a new replay history.'
                     : 'Records the focused window. Switching apps changes the recording target.'}
                 </p>
+                {platform.portal_capture && <button type="button" className="btn-secondary"
+                  onClick={() => { setCaptureError(null); void selectCaptureSource().catch((error: unknown) => setCaptureError(String(error))); }}>
+                  Choose recording window…
+                </button>}
+                {captureError && <p className="audio-routing-note" role="alert">{captureError}</p>}
               </div>
 
               <div className="field-group">
@@ -458,10 +474,10 @@ export function SettingsModal({
                 )}
               </div>
 
-              <div className="toggle-row" style={{ marginTop: 4 }}>
+              {platform.autostart && <div className="toggle-row" style={{ marginTop: 4 }}>
                 <div>
                   <div style={{ fontWeight: 600 }}>
-                    Start Recorder with Windows
+                    {platform.os === 'windows' ? 'Start Recorder with Windows' : 'Start Recorder at login'}
                   </div>
                   <div style={{ fontSize: 11, color: 'var(--ink-engraved)' }}>
                     Runs quietly in system tray on login
@@ -477,11 +493,11 @@ export function SettingsModal({
                     }))
                   }
                   aria-pressed={draft.start_with_windows}
-                  aria-label="Start recorder with Windows"
+                  aria-label={platform.os === 'windows' ? 'Start recorder with Windows' : 'Start recorder at login'}
                 >
                   <span className="switch-thumb" />
                 </button>
-              </div>
+              </div>}
             </section>
           </div>
 
@@ -500,11 +516,11 @@ export function SettingsModal({
             </div>
             {!applications?.supported && <p className="audio-routing-note">
               {applicationsError ? 'Could not check application audio support. Reopen Settings to retry.'
-                : applications ? 'Application audio requires Windows build 20348 or later. Use audio devices on this system.'
+                : applications ? platform.os === 'windows' ? 'Application audio requires Windows build 20348 or later. Use audio devices on this system.' : 'Application audio is unavailable in the current audio session. Use audio devices or check the native capture runtime.'
                 : 'Checking application audio support…'}
             </p>}
             {draft.audio_mode === 'Applications' ? <>
-              <p className="audio-routing-note">Game audio follows the recorded application and its child processes. Chat uses an executable name, so title changes and restarts are handled automatically. No separate playback devices are needed.</p>
+              <p className="audio-routing-note">{platform.os === 'windows' ? 'Game audio follows the recorded application and its child processes. Chat uses an executable name, so title changes and restarts are handled automatically. No separate playback devices are needed.' : 'Game and chat audio are captured separately by application. Choose chat from the list of running applications.'}</p>
               <div className="settings-grid audio-routing">
                 <div className="field-group">
                   <label htmlFor="game-application-audio">Game audio</label>
@@ -513,10 +529,17 @@ export function SettingsModal({
                     <option value="game">Recorded application</option>
                     <option value="off">Off (Disabled)</option>
                   </select>
+                  {platform.portal_capture && draft.game_audio_enabled && <>
+                    <label htmlFor="game-audio-application">Game audio application</label>
+                    <input id="game-audio-application" list="audio-applications" placeholder="Choose the game's audio application"
+                      value={draft.game_application ?? ''}
+                      onChange={(event) => setDraft((value) => ({ ...value, game_application: event.target.value || null }))} />
+                    <p className="audio-routing-note">Play audio in your game, then refresh applications. The system window dialog does not identify its audio stream.</p>
+                  </>}
                 </div>
                 <div className="field-group">
                   <label htmlFor="chat-application">Chat application</label>
-                  <input id="chat-application" list="audio-applications" placeholder="Off — enter an app.exe"
+                  <input id="chat-application" list="audio-applications" placeholder={platform.os === 'windows' ? 'Off — enter an app.exe' : 'Off — choose an application identifier'}
                     value={draft.chat_application ?? ''} aria-invalid={chatInvalid}
                     onChange={(e) => setDraft((d) => ({ ...d, chat_application: e.target.value || null }))}
                     onBlur={() => setDraft((d) => ({ ...d, chat_application: d.chat_application?.trim() || null }))} />
@@ -524,11 +547,11 @@ export function SettingsModal({
                   <button type="button" className="btn-ghost" onClick={refreshApplications}>Refresh applications</button>
                 </div>
               </div>
-              {chatInvalid && <p className="audio-routing-note" role="alert">Enter an executable filename such as Chat.exe, without a file path or window title.</p>}
+              {chatInvalid && <p className="audio-routing-note" role="alert">{platform.os === 'windows' ? 'Enter an executable filename such as Chat.exe, without a file path or window title.' : 'Choose an application identifier, without a file path.'}</p>}
               {draft.chat_application && !applications?.executables.some((exe) => exe.toLowerCase() === draft.chat_application?.toLowerCase())
                 && <p className="audio-routing-note">{draft.chat_application} is not running. Chat audio will connect when it opens.</p>}
             </> : <>
-            <p className="audio-routing-note">Route the game and chat app to different playback devices in Windows. Apps sharing an output cannot be separated in this mode.</p>
+            <p className="audio-routing-note">{platform.os === 'macos' ? 'System audio includes all applications. Choose Applications above to separate game and chat audio.' : 'Route the game and chat app to different playback devices in your sound settings. Apps sharing an output cannot be separated in this mode.'}</p>
             {sameOutput && <p className="audio-routing-note" role="status">Game and chat use the same playback device. Both tracks may contain the same audio.</p>}
             <div className="settings-grid audio-routing">
               <div className="field-group">
@@ -604,6 +627,7 @@ export function SettingsModal({
             {audioWarnings?.filter(Boolean).map((message, i) => <p key={i} className="audio-routing-note" role="status">Current recorder: {message}</p>)}
           </section>
 
+          </>}
           <section className="settings-section">
             <h3>
               <label htmlFor="clips-folder">Clips folder</label>
@@ -625,7 +649,7 @@ export function SettingsModal({
             </div>
           </section>
 
-          <section className="settings-section">
+          {platform.recording && !platform.portal_capture && <section className="settings-section">
             <h3>Games to capture ({draft.games.length})</h3>
             <div className="games-chips">
               {draft.games.map((g) => (
@@ -647,10 +671,10 @@ export function SettingsModal({
                 </span>
               ))}
             </div>
-            <GamePicker games={draft.games} onAdd={(exe) => setDraft((d) =>
+            {!platform.portal_capture && <GamePicker games={draft.games} onAdd={(exe) => setDraft((d) =>
               d.games.some((game) => game.toLowerCase() === exe.toLowerCase())
-                ? d : { ...d, games: [...d.games, exe] })} />
-          </section>
+                ? d : { ...d, games: [...d.games, exe] })} />}
+          </section>}
         </fieldset>
       </div>
 
@@ -660,7 +684,7 @@ export function SettingsModal({
         </button>
         <button
           className="btn-primary"
-          disabled={busy || chatInvalid || (draft.audio_mode === 'Applications' && !applications?.supported)}
+          disabled={busy || (platform.recording && (chatInvalid || (draft.audio_mode === 'Applications' && !applications?.supported)))}
           onClick={() => onSave(draft)}
         >
           {busy ? 'Applying…' : 'Save settings'}

@@ -2,10 +2,10 @@ name: UI checks
 
 on:
   push:
-    branches: ['codex/**']
+    branches: ['dev', 'codex/**']
     paths: ['apps/ui/**', '.github/workflows/ui-checks.yml']
   pull_request:
-    branches: [main]
+    branches: [main, dev]
     paths: ['apps/ui/**', '.github/workflows/ui-checks.yml']
   workflow_dispatch:
 

@@ -1,3 +1,4 @@
+import { usePlatform } from '../platform';
 import {
   Camera,
   FolderOpen,
@@ -44,6 +45,7 @@ export function TopBar({
   onRefreshClips,
   onOpenSettings,
 }: TopBarProps) {
+  const platform = usePlatform();
   const mode = status?.mode ?? config?.mode ?? 'GameDetection';
   const fps = status?.fps ?? config?.fps ?? 60;
   const height = status?.height ?? config?.height ?? 1080;
@@ -51,7 +53,7 @@ export function TopBar({
   const hotkey = status?.hotkey ?? config?.hotkey ?? 'Alt+S';
 
   let dotClass = 'offline';
-  let statusText = 'Recorder Offline';
+  let statusText = platform.recording ? 'Recorder Offline' : 'Library & editor preview';
   if (status) {
     if (status.state === 'Recording') {
       dotClass = 'recording';
@@ -78,7 +80,7 @@ export function TopBar({
           <span className="status-label">{statusText}</span>
         </div>
 
-        {!status ? (
+        {platform.recording && (!status ? (
           <button
             className="btn-primary"
             onClick={onStartRecorder}
@@ -111,20 +113,20 @@ export function TopBar({
               <Square size={12} fill="currentColor" />
             </button>
           </>
-        )}
+        ))}
 
-        <div className="mode-switch" role="group" aria-label="Capture Mode">
+        {platform.recording && <div className="mode-switch" role="group" aria-label="Capture Mode">
           <button
             className={mode === 'GameDetection' ? 'active' : ''}
             aria-pressed={mode === 'GameDetection'}
             onClick={() => mode !== 'GameDetection' && onChangeMode('GameDetection')}
             disabled={busyAction === 'mode'}
-            title="Automatically record supported games"
+            title={platform.portal_capture ? 'Record the window selected in the system sharing dialog' : 'Automatically record supported games'}
           >
             <Gamepad2 size={13} />
-            Games
+            {platform.portal_capture ? 'Selected window' : 'Games'}
           </button>
-          <button
+          {!platform.portal_capture && <button
             className={mode === 'ActiveWindow' ? 'active' : ''}
             aria-pressed={mode === 'ActiveWindow'}
             onClick={() => mode !== 'ActiveWindow' && onChangeMode('ActiveWindow')}
@@ -133,8 +135,8 @@ export function TopBar({
           >
             <Monitor size={13} />
             Window
-          </button>
-        </div>
+          </button>}
+        </div>}
       </div>
 
       <div className="top-right">
@@ -142,22 +144,22 @@ export function TopBar({
           aria-label="Audio needs attention" title={status.audio_warnings.filter(Boolean).join('\n')}>
           <Volume2 size={16} />
         </button>}
-        <div className="meta-chip mono" title="Clip Buffer · Resolution · Framerate">
+        {platform.recording && <div className="meta-chip mono" title="Clip Buffer · Resolution · Framerate">
           <span>{bufferSecs}s</span>
           <span>·</span>
           <span>{height === 0 ? 'Native' : `${height}p`}</span>
           <span>·</span>
           <span>{fps}fps</span>
-        </div>
+        </div>}
 
-        <button
+        {platform.recording && <button
           className="hotkey-keycap mono"
           onClick={onOpenSettings}
           title="Click to configure save hotkey"
         >
           <Keyboard size={12} />
           <strong>{hotkey}</strong>
-        </button>
+        </button>}
 
         <button className="btn-icon" onClick={onOpenFolder} title="Open clips folder" aria-label="Open clips folder">
           <FolderOpen size={15} />

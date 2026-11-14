@@ -539,7 +539,7 @@ export function EditorView({
           <button
             className="path-link mono"
             onClick={() => onRevealClip(clip.path)}
-            title={`Reveal in Explorer: ${clip.path}`}
+            title={`Show in folder: ${clip.path}`}
           >
             {clip.path}
           </button>
@@ -724,7 +724,7 @@ export function EditorView({
             <span className="inspector-label">Clip file</span>
             <button className="btn-secondary" onClick={() => onRevealClip(clip.path)}>
               <FolderOpen size={14} />
-              Show in Explorer
+              Show in folder
             </button>
             {confirmDelete ? (
               <div style={{ display: 'flex', gap: 6 }}>

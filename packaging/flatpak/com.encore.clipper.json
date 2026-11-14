@@ -1,0 +1,61 @@
+{
+  "app-id": "com.encore.clipper",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "51",
+  "sdk": "org.gnome.Sdk",
+  "command": "encore-ui",
+  "default-branch": "dev",
+  "finish-args": [
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--share=ipc",
+    "--device=dri",
+    "--socket=pulseaudio",
+    "--filesystem=xdg-run/pipewire-0",
+    "--talk-name=org.kde.StatusNotifierWatcher",
+    "--talk-name=com.canonical.AppMenu.Registrar",
+    "--filesystem=xdg-videos"
+  ],
+  "modules": [
+    {
+      "name": "x264",
+      "config-opts": ["--disable-cli", "--enable-shared"],
+      "sources": [{
+        "type": "git",
+        "url": "https://code.videolan.org/videolan/x264.git",
+        "commit": "b35605ace3ddf7c1a5d67a2eb553f034aef41d55"
+      }]
+    },
+    {
+      "name": "ffmpeg",
+      "config-opts": [
+        "--disable-autodetect", "--disable-doc", "--disable-debug",
+        "--disable-static", "--enable-shared", "--enable-gpl", "--enable-libx264", "--enable-zlib"
+      ],
+      "sources": [{
+        "type": "archive",
+        "url": "https://www.ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz",
+        "sha256": "8c3850283eb25fa026482078a04051e0be17347b09ef81a0849bec15a96e002e"
+      }]
+    },
+    "native-capture.json",
+    {
+      "name": "encore",
+      "buildsystem": "simple",
+      "build-commands": [
+        "install -Dm755 encore-ui /app/bin/encore-ui",
+        "install -Dm755 encore-recorder /app/bin/encore-recorder",
+        "install -Dm644 com.encore.clipper.desktop /app/share/applications/com.encore.clipper.desktop",
+        "install -Dm644 com.encore.clipper.metainfo.xml /app/share/metainfo/com.encore.clipper.metainfo.xml",
+        "install -Dm644 icon.png /app/share/icons/hicolor/256x256/apps/com.encore.clipper.png"
+      ],
+      "sources": [
+        {"type": "file", "path": "input/encore-ui"},
+        {"type": "file", "path": "input/encore-recorder"},
+        {"type": "file", "path": "com.encore.clipper.desktop"},
+        {"type": "file", "path": "com.encore.clipper.metainfo.xml"},
+        {"type": "file", "path": "../../apps/ui/src-tauri/icons/128x128@2x.png", "dest-filename": "icon.png"}
+      ]
+    }
+  ]
+}

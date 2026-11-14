@@ -9,6 +9,7 @@ export interface Config {
   hotkey: string;
   audio_mode: AudioMode;
   game_audio_enabled: boolean;
+  game_application?: string | null;
   chat_application: string | null;
   audio_device: string | null;
   chat_device: string | null;
