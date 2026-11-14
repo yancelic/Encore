@@ -101,6 +101,7 @@ obs_data_t *platform_background_status() {
 bool platform_is_wayland() { return false; }
 const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
 const char *platform_video_source() { return "screen_capture"; }
+const char *platform_video_fallback_source() { return nullptr; }
 bool platform_video_ready(std::string &warning) {
     static bool requested = false;
     if (CGPreflightScreenCaptureAccess()) return true;

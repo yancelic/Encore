@@ -18,6 +18,7 @@
 #include <vector>
 #include <chrono>
 
+
 namespace encore {
 void platform_background_shutdown();
 namespace {
@@ -119,6 +120,7 @@ std::string platform_hotkey_warning() { return wayland ? wayland_shortcuts_warni
 bool platform_is_wayland() { return wayland; }
 const char *platform_graphics_module() { return "libobs-opengl.so"; }
 const char *platform_video_source() { return wayland ? "pipewire-window-capture-source" : "xcomposite_input"; }
+const char *platform_video_fallback_source() { return wayland ? nullptr : "encore_x11_window"; }
 bool platform_video_ready(std::string &) { return true; } // The Wayland source obtains its portal grant itself.
 
 std::vector<Application> platform_applications() {

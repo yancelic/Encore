@@ -28,6 +28,7 @@ std::vector<std::string> platform_audio_applications();
 uint64_t platform_audio_identity(const std::string &application);
 const char *platform_graphics_module();
 const char *platform_video_source();
+const char *platform_video_fallback_source();
 bool platform_video_ready(std::string &warning);
 void platform_video_settings(obs_data_t *settings, const Application &application);
 const char *platform_audio_source(bool microphone, bool application);

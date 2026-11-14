@@ -20,6 +20,9 @@
 
 namespace fs = std::filesystem;
 void encore_register_diagnostic_sources();
+#ifndef __APPLE__
+void encore_register_x11_software_capture();
+#endif
 namespace {
 thread_local std::string last_error;
 struct Engine;
@@ -46,6 +49,7 @@ struct Engine {
     std::atomic<bool> encoder_failed{false};
     bool configured = false;
     bool tray_visible = true;
+    bool software_window = false;
     bool core_started = false;
     log_handler_t previous_log = nullptr;
     void *previous_log_context = nullptr;
@@ -103,6 +107,7 @@ struct Engine {
         for (auto &identity : audio_identity) identity = 0;
         for (auto &warning : warnings) warning.clear();
         target = {};
+        software_window = false;
     }
 
     void reset_video(uint32_t source_width, uint32_t source_height) {
@@ -288,8 +293,9 @@ struct Engine {
         warnings[track].clear();
     }
 
-    void create_capture(const encore::Application &application) {
+    void create_capture(const encore::Application &application, bool software = false) {
         clear_capture();
+        software_window = software;
         target = application;
         source_created = std::chrono::steady_clock::now();
         OBSDataAutoRelease settings = obs_data_create();
@@ -300,7 +306,9 @@ struct Engine {
         }
         const bool diagnostic = obs_data_get_bool(config, "diagnostic_source");
         if (!diagnostic) encore::platform_video_settings(settings, target);
-        video = obs_source_create(diagnostic ? "encore_test_video" : encore::platform_video_source(), "Encore selected window", settings, nullptr);
+        obs_data_set_int(settings, "window", target.window);
+        obs_data_set_int(settings, "fps", fps);
+        video = obs_source_create(diagnostic ? "encore_test_video" : software ? encore::platform_video_fallback_source() : encore::platform_video_source(), "Encore selected window", settings, nullptr);
         if (!video) throw std::runtime_error("Could not capture the selected window. Check Screen Recording permissions or the desktop portal.");
         obs_source_set_audio_mixers(video, 0);
         scene = obs_scene_create_private("Encore scene");
@@ -396,6 +404,13 @@ struct Engine {
         const auto sw = obs_source_get_width(video), sh = obs_source_get_height(video);
         if (!sw || !sh) {
             if (output) stop_output();
+            if (!software_window && encore::platform_video_fallback_source()
+                && now - source_created > std::chrono::seconds(2)) {
+                const auto application = target;
+                blog(LOG_WARNING, "Native window texture import unavailable; using the selected window's CPU pixmap transfer");
+                create_capture(application, true);
+                return;
+            }
             if (now - source_created > std::chrono::seconds(3))
                 error = "Waiting for the selected window. Complete the screen-sharing dialog or grant Screen Recording permission, then reselect the source if needed.";
             return;
@@ -575,6 +590,9 @@ extern "C" void *ec_create(const char *runtime, ec_packet_callback packet, void 
         info.encoded_video_codecs = "h264"; info.encoded_audio_codecs = "aac";
         obs_register_output(&info);
         encore_register_diagnostic_sources();
+#ifndef __APPLE__
+        encore_register_x11_software_capture();
+#endif
         load_modules(engine->runtime);
         return engine.release();
     } catch (const std::exception &error) { last_error = error.what(); return nullptr; }
