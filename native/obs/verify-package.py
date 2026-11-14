@@ -59,4 +59,13 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
     assert diagnostics['video_source'] in registered, diagnostics
     assert diagnostics['h264_encoders'], diagnostics
     assert ('sck_audio_capture' if sys.platform == 'darwin' else 'pipewire_audio_application_capture') in registered, diagnostics
+    # Exercise offline discovery as well as repeated discovery in the live engine.
+    query = subprocess.check_output([*prefix, str(helper), '--query', 'audio_devices'],
+        cwd=directory, env=environment, text=True)
+    devices = json.loads(next(line.removeprefix('ENCORE_QUERY ') for line in query.splitlines()
+        if line.startswith('ENCORE_QUERY ')))['devices']
+    assert isinstance(devices, list)
+    assert all(isinstance(device['name'], str) and device['kind'] in ['Input', 'Output'] for device in devices)
+    if sys.platform == 'darwin':
+        assert any(device['kind'] == 'Output' and device['is_default'] for device in devices)
     print(json.dumps({'ok': True, 'relocated_package': sys.platform, 'obs': diagnostics['obs_version']}))

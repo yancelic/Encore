@@ -204,7 +204,8 @@ struct Engine {
     }
 
     void configure_hotkey() {
-        encore::platform_configure_hotkey(obs_data_get_string(config, "hotkey"));
+        if (!obs_data_get_bool(config, "diagnostic_no_permission_prompts"))
+            encore::platform_configure_hotkey(obs_data_get_string(config, "hotkey"));
         if (encore::platform_is_wayland()) return; // The compositor owns global shortcuts on Wayland.
         if (hotkey == OBS_INVALID_HOTKEY_ID) hotkey = obs_hotkey_register_frontend(
             "Encore.Save", "Save Encore replay", [](void *data, obs_hotkey_id, obs_hotkey_t *, bool pressed) {
@@ -274,17 +275,13 @@ struct Engine {
             return;
         }
         if (!app && selection != "default") {
-            obs_properties_t *properties = obs_get_source_properties(id);
-            obs_property_t *devices = properties ? obs_properties_get(properties, "device_id") : nullptr;
-            for (size_t i = 0; devices && i < obs_property_list_item_count(devices); ++i) {
-                const std::string name = obs_property_list_item_name(devices, i);
-                const std::string value = obs_property_list_item_string(devices, i);
-                if (name == selection || value == selection || name.find(selection) != std::string::npos) {
-                    obs_data_set_string(settings, "device_id", value.c_str());
+            for (const auto &device : encore::platform_audio_devices()) {
+                if (device.input != (track == 2)) continue;
+                if (device.name == selection || device.id == selection || device.name.find(selection) != std::string::npos) {
+                    obs_data_set_string(settings, "device_id", device.id.c_str());
                     break;
                 }
             }
-            if (properties) obs_properties_destroy(properties);
         }
         audio[track] = obs_source_create(id, ("Encore " + std::to_string(track)).c_str(), settings, nullptr);
         if (!audio[track]) { warnings[track] = "Could not open selected audio source"; return; }
@@ -449,25 +446,12 @@ struct Engine {
     obs_data_t *audio_devices() {
         auto *result = obs_data_create();
         OBSDataArrayAutoRelease devices = obs_data_array_create();
-        for (unsigned direction = 0; direction < 2; ++direction) {
-            const char *source_id = encore::platform_audio_source(direction == 1, false);
-            obs_properties_t *properties = obs_get_source_properties(source_id);
-            auto *list = properties ? obs_properties_get(properties, "device_id") : nullptr;
-            if (!list && direction == 0) {
-                OBSDataAutoRelease item = obs_data_create();
-                obs_data_set_string(item, "name", "default");
-                obs_data_set_string(item, "kind", "Output");
-                obs_data_set_bool(item, "is_default", true);
-                obs_data_array_push_back(devices, item);
-            }
-            for (size_t i = 0; list && i < obs_property_list_item_count(list); ++i) {
-                OBSDataAutoRelease item = obs_data_create();
-                obs_data_set_string(item, "name", obs_property_list_item_name(list, i));
-                obs_data_set_string(item, "kind", direction == 0 ? "Output" : "Input");
-                obs_data_set_bool(item, "is_default", std::string(obs_property_list_item_string(list, i)) == "default");
-                obs_data_array_push_back(devices, item);
-            }
-            if (properties) obs_properties_destroy(properties);
+        for (const auto &device : encore::platform_audio_devices()) {
+            OBSDataAutoRelease item = obs_data_create();
+            obs_data_set_string(item, "name", device.name.c_str());
+            obs_data_set_string(item, "kind", device.input ? "Input" : "Output");
+            obs_data_set_bool(item, "is_default", device.is_default);
+            obs_data_array_push_back(devices, item);
         }
         obs_data_set_array(result, "devices", devices);
         return result;

@@ -11,6 +11,12 @@ struct Application {
     bool focused = false;
     bool minimized = false;
 };
+struct AudioDevice {
+    std::string name;
+    std::string id;
+    bool input = false;
+    bool is_default = false;
+};
 
 bool platform_init(std::string &error);
 void platform_pump();
@@ -26,6 +32,7 @@ bool platform_is_wayland();
 std::vector<Application> platform_applications();
 std::vector<std::string> platform_audio_applications();
 uint64_t platform_audio_identity(const std::string &application);
+std::vector<AudioDevice> platform_audio_devices();
 const char *platform_graphics_module();
 const char *platform_video_source();
 const char *platform_video_fallback_source();

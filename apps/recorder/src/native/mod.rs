@@ -11,16 +11,16 @@ use serde_json::{json, Value};
 use std::io::Write;
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicUsize, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 const REPLAY_BUDGET: usize = 512 * 1024 * 1024;
-static TERMINATE: AtomicBool = AtomicBool::new(false);
+static TERMINATE: AtomicI32 = AtomicI32::new(0);
 
-extern "C" fn terminate(_: libc::c_int) { TERMINATE.store(true, Ordering::Release); }
+extern "C" fn terminate(signal: libc::c_int) { TERMINATE.store(signal, Ordering::Release); }
 
 struct Control {
     request: IpcRequest,
@@ -282,6 +282,7 @@ fn handle_control(
                 Ok(IpcResponse::Ok)
             }
             IpcRequest::Shutdown => {
+                eprintln!("Encore recorder: stopping because an IPC Shutdown request was received");
                 stop.store(true, Ordering::Release);
                 Ok(IpcResponse::Ok)
             }
@@ -355,7 +356,7 @@ fn run() -> Result<(), String> {
         libc::signal(libc::SIGINT, terminate as *const () as libc::sighandler_t);
     }
     eprintln!("Encore recorder: background service ready (pid {})", std::process::id());
-    while !stop.load(Ordering::Acquire) && !TERMINATE.load(Ordering::Acquire) {
+    while !stop.load(Ordering::Acquire) && TERMINATE.load(Ordering::Acquire) == 0 {
         while let Ok(control) = receiver.try_recv() {
             handle_control(
                 control,
@@ -373,6 +374,7 @@ fn run() -> Result<(), String> {
             match engine.request(&json!({"action":"status"})) {
                 Ok(native) => {
                     if native["quit_requested"].as_bool().unwrap_or(false) {
+                        eprintln!("Encore recorder: stopping because Quit Encore was selected in the native menu");
                         let _ = ipc::send_ui_command("quit");
                         stop.store(true, Ordering::Release);
                     }
@@ -436,6 +438,8 @@ fn run() -> Result<(), String> {
         }
         thread::sleep(Duration::from_millis(10));
     }
+    let signal = TERMINATE.load(Ordering::Acquire);
+    if signal != 0 { eprintln!("Encore recorder: stopping because signal {signal} was received"); }
     stop.store(true, Ordering::Release);
     // Drain accepted exports before releasing the IPC singleton or native library.
     drop(engine);
@@ -530,21 +534,28 @@ fn idle_self_test(directory: PathBuf) -> Result<(), String> {
     let config = Config { games: vec![], ..Config::default() };
     let mut request = configuration(&config)?;
     request["config"]["state_dir"] = json!(directory);
-    request["config"]["diagnostic_no_shortcut"] = json!(true);
+    request["config"]["diagnostic_no_permission_prompts"] = json!(true);
     let answer = engine.request(&request)?;
     if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
-    for step in 0..150 {
+    let mut device_queries = 0;
+    for step in 0..750 {
         if step == 50 || step == 75 {
             engine.request(&json!({"action":"tray", "visible":step == 75}))?;
         }
         engine.tick();
+        if step % 25 == 0 {
+            let devices = engine.request(&json!({"action":"audio_devices"}))?;
+            if !devices["devices"].is_array() { return Err("Device discovery returned an invalid response".into()); }
+            device_queries += 1;
+        }
         let status = engine.request(&json!({"action":"status"}))?;
+        if status["quit_requested"].as_bool() == Some(true) { return Err("Native menu requested quit without a user action".into()); }
         if status["recording"].as_bool() == Some(true) { return Err("Idle test unexpectedly captured content".into()); }
         if let Some(error) = status["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
         thread::sleep(Duration::from_millis(20));
     }
     drop(engine);
-    println!("{}", json!({"ok":true, "idle_menu_lifecycle":true}));
+    println!("{}", json!({"ok":true, "idle_menu_lifecycle":true, "device_queries":device_queries}));
     Ok(())
 }
 

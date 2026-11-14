@@ -201,6 +201,22 @@ std::vector<std::string> platform_audio_applications() {
 }
 uint64_t platform_audio_identity(const std::string &) { return 1; } // PipeWire reconnects streams through registry events.
 
+std::vector<AudioDevice> platform_audio_devices() {
+    std::vector<AudioDevice> result;
+    for (const bool input : {false, true}) {
+        // PulseAudio's device property callback supports an absent source context.
+        auto *properties = obs_get_source_properties(platform_audio_source(input, false));
+        auto *list = properties ? obs_properties_get(properties, "device_id") : nullptr;
+        for (size_t i = 0; list && i < obs_property_list_item_count(list); ++i) {
+            const char *name = obs_property_list_item_name(list, i);
+            const char *id = obs_property_list_item_string(list, i);
+            if (name && id) result.push_back({name, id, input, std::string(id) == "default"});
+        }
+        if (properties) obs_properties_destroy(properties);
+    }
+    return result;
+}
+
 const char *platform_audio_source(bool microphone, bool application) {
     return microphone ? "pulse_input_capture" : application ? "pipewire_audio_application_capture" : "pulse_output_capture";
 }

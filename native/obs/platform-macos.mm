@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <ApplicationServices/ApplicationServices.h>
 #import <AVFoundation/AVFoundation.h>
+#import <CoreAudio/CoreAudio.h>
 #include <unistd.h>
 #include <cstdio>
 
@@ -167,6 +168,46 @@ uint64_t platform_audio_identity(const std::string &identifier) {
         for (NSRunningApplication *application in applications) if (!application.terminated) return application.processIdentifier;
     }
     return 0;
+}
+
+std::vector<AudioDevice> platform_audio_devices() {
+    // ScreenCaptureKit's audio source has instance-dependent properties; querying
+    // its OBS properties without a live source dereferences a null capture context.
+    // CoreAudio metadata queries enumerate microphones without opening a capture session.
+    std::vector<AudioDevice> result{{"System audio", "default", false, true}};
+    AudioObjectPropertyAddress property{kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    AudioDeviceID default_input = kAudioObjectUnknown;
+    UInt32 size = sizeof(default_input);
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, nullptr, &size, &default_input);
+    property.mSelector = kAudioHardwarePropertyDevices;
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &property, 0, nullptr, &size) != noErr
+        || size > 65536) return result;
+    std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, nullptr, &size, devices.data()) != noErr) return result;
+    devices.resize(size / sizeof(AudioDeviceID));
+    @autoreleasepool {
+        for (const auto device : devices) {
+            AudioObjectPropertyAddress input{kAudioDevicePropertyStreams,
+                kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMain};
+            UInt32 streams = 0;
+            if (AudioObjectGetPropertyDataSize(device, &input, 0, nullptr, &streams) != noErr || !streams) continue;
+            CFStringRef name = nullptr, uid = nullptr;
+            AudioObjectPropertyAddress identity{kAudioObjectPropertyName,
+                kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+            UInt32 length = sizeof(name);
+            AudioObjectGetPropertyData(device, &identity, 0, nullptr, &length, &name);
+            identity.mSelector = kAudioDevicePropertyDeviceUID;
+            length = sizeof(uid);
+            AudioObjectGetPropertyData(device, &identity, 0, nullptr, &length, &uid);
+            const char *name_utf8 = name ? [(__bridge NSString *)name UTF8String] : nullptr;
+            const char *uid_utf8 = uid ? [(__bridge NSString *)uid UTF8String] : nullptr;
+            if (name_utf8 && uid_utf8) result.push_back({name_utf8, uid_utf8, true, device == default_input});
+            if (name) CFRelease(name);
+            if (uid) CFRelease(uid);
+        }
+    }
+    return result;
 }
 
 const char *platform_audio_source(bool microphone, bool) {
