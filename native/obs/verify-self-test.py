@@ -23,7 +23,8 @@ def verify(path, silent=False):
     assert min(durations) >= 1.5, f'Replay duration is too short: {durations}'
     assert max(durations) - min(durations) < 0.2, f'A/V timestamps drifted: {durations}'
     video = output('ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v:0', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
-    assert len(video) >= 60 * 3 and statistics.pstdev(video[::3]) > 20, 'Captured video is frozen or blank'
+    frames, variation = len(video) // 3, statistics.pstdev(video[::3])
+    assert frames >= 60 and variation > 20, f'Insufficient or frozen captured video: frames={frames}, red_stddev={variation}'
     frequencies = [440, 660, 880]
     for track, expected in enumerate(frequencies):
         samples = array('f')

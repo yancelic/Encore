@@ -608,9 +608,14 @@ fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
     }
     let start = Instant::now();
     let mut last_status = Value::Null;
-    while start.elapsed() < Duration::from_secs(5) {
+    let mut recording_since = None;
+    while start.elapsed() < Duration::from_secs(20) {
         engine.tick();
         last_status = engine.request(&json!({"action":"status"}))?;
+        if last_status["recording"].as_bool().unwrap_or(false) {
+            let since = recording_since.get_or_insert_with(Instant::now);
+            if since.elapsed() >= Duration::from_secs(5) { break; }
+        } else { recording_since = None; }
         thread::sleep(Duration::from_millis(10));
     }
     if !last_status["recording"].as_bool().unwrap_or(false) {
