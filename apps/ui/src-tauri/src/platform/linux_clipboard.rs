@@ -32,7 +32,13 @@ impl Transfer {
         message.set_num_unix_fds(1);
         let (reply, _) = transfer.connection.send_message_with_reply_sync(&message, gio::DBusSendMessageFlags::NONE,
             2000, None::<&gio::Cancellable>).map_err(|e| e.to_string())?;
-        reply.to_gerror().map_err(|e| e.to_string())?;
+        // gio 0.18's generated to_gerror() has an inverted debug assertion for
+        // successful method returns. Inspect the D-Bus error message directly.
+        if reply.message_type() == gio::DBusMessageType::Error {
+            let detail = reply.body().and_then(|body| body.child_value(0).get::<String>());
+            return Err(detail.unwrap_or_else(|| reply.error_name().map(|name| name.to_string())
+                .unwrap_or_else(|| "The file-transfer portal rejected the clip".into())));
+        }
         Ok(transfer)
     }
 }

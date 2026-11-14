@@ -23,6 +23,10 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
                 info = plistlib.load(file)
             assert info.get('NSMicrophoneUsageDescription'), f'Microphone permission description missing: {bundle}'
             assert info.get('NSScreenCaptureUsageDescription'), f'Screen capture permission description missing: {bundle}'
+            signed = subprocess.run(['codesign', '-d', '--entitlements', ':-', str(bundle)],
+                check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            entitlements = plistlib.loads(signed.stdout)
+            assert entitlements.get('com.apple.security.device.audio-input') is True, f'Microphone entitlement missing: {bundle}'
         framework = app / 'Contents/Resources/obs-runtime/Contents/Frameworks/libobs.framework'
         assert (framework / 'Versions/Current').is_symlink(), 'The macOS framework layout was flattened during packaging'
         # FFmpeg must come from the bundle, even with Homebrew absent from PATH.
