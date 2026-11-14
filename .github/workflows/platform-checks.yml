@@ -3,6 +3,7 @@ name: Platform checks
 on:
   push:
     branches: [dev]
+    tags: ['v*-beta.*']
     paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'apps/**', 'native/**', 'packaging/**', '.github/workflows/platform-checks.yml']
   pull_request:
     branches: [dev, main]
@@ -26,6 +27,7 @@ env:
 jobs:
   flatpak:
     name: Flatpak native runtime
+    if: github.ref_type != 'tag'
     needs: obs-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -73,6 +75,7 @@ jobs:
 
   obs-macos:
     name: Apple Silicon OBS bridge
+    if: github.ref_type != 'tag'
     runs-on: macos-26
     timeout-minutes: 60
     steps:
@@ -128,6 +131,7 @@ jobs:
       - name: Compile capture and mux bridge
         run: |
           python3 native/obs/prepare-linux.py
+          ctest --test-dir target/native-obs-linux/bridge-build --output-on-failure
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -248,3 +252,50 @@ jobs:
             target/*-dev.flatpak
           if-no-files-found: error
           retention-days: 14
+
+  publish-linux-beta:
+    name: Publish Ubuntu beta
+    if: github.event_name == 'push' && github.ref_type == 'tag' && contains(github.ref_name, '-beta.')
+    needs: [obs-linux, native]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: encore-obs-bridge-linux-dev
+          path: target/beta-artifact
+      - name: Prepare the tested package and release notes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python3 - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          version = json.loads(Path('apps/ui/src-tauri/tauri.conf.json').read_text())['version']
+          assert re.fullmatch(r'v\d+\.\d+\.\d+-beta\.\d+', tag), f'Invalid beta tag: {tag}'
+          assert tag == f'v{version}', f'Tag {tag} does not match package {version}'
+          PY
+          mkdir -p target/beta-release
+          packages=(target/beta-artifact/target/release/bundle/deb/*.deb)
+          test "${#packages[@]}" -eq 1
+          test -f "${packages[0]}"
+          test "$(dpkg-deb -f "${packages[0]}" Architecture)" = amd64
+          cp "${packages[0]}" target/beta-release/
+          cp docs/linux-beta-testing.md target/beta-release/TEST-NOTU.md
+          (cd target/beta-release && sha256sum -- *.deb TEST-NOTU.md > SHA256SUMS.txt)
+          cp docs/releases/linux-beta.md target/beta-release-notes.md
+          printf '\nSource commit: `%s`\n' "$GITHUB_SHA" >> target/beta-release-notes.md
+      - name: Publish a prerelease with the verified assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$RELEASE_TAG" target/beta-release/* \
+            --verify-tag --draft --prerelease --latest=false \
+            --title "Encore $RELEASE_TAG — Ubuntu Beta" \
+            --notes-file target/beta-release-notes.md
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false

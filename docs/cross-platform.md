@@ -1,6 +1,6 @@
 # Cross-platform development
 
-Work on `dev`. `main` is the production branch. Preview workflows upload development artifacts and do not create releases, update `latest.json`, or publish to Flathub.
+Work on `dev`. `main` is the production branch. Branch preview workflows upload development artifacts. Tags matching `v<version>-beta.<number>` publish a tested Ubuntu `.deb` as a GitHub prerelease with a test guide and checksums; they do not publish to Flathub or update `latest.json`.
 
 ## Targets and current status
 
@@ -58,6 +58,27 @@ npm --prefix apps/ui run build:preview
 
 The `.deb` declares FFmpeg and playback codec dependencies. Build on Ubuntu 24.04 to retain that glibc baseline. Linux playback uses WebKitGTK/GStreamer and needs native verification, beyond Chromium-based frontend tests.
 
+Wayland save shortcuts use the Global Shortcuts portal when the desktop provides
+it. Encore translates letter, navigation, punctuation, keypad and media keys to
+the case-sensitive XDG trigger format; the desktop may let the user choose a
+different binding. If the portal is unavailable or permission is denied, use
+Save replay in the library/menu, or assign a desktop shortcut to
+`encore-recorder --save`. The `.deb` recorder helper is bundled in the app's
+resource directory, so use its installed absolute path when setting that command.
+X11 uses OBS's global hotkey backend.
+
+The native Linux build also provides a shortcut regression test, including X11
+keysym validation without connecting to a display:
+
+```sh
+ctest --test-dir target/native-obs-linux/bridge-build --output-on-failure
+```
+
+This verifies trigger conversion; compositor permission dialogs and shortcut
+activation still require a real Wayland session. The format follows the
+[XDG Shortcuts specification](https://specifications.freedesktop.org/shortcuts/latest/)
+used by the [Global Shortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html).
+
 ### Flatpak
 
 First build the Ubuntu preview, then install `flatpak` and `flatpak-builder`:
@@ -74,6 +95,15 @@ This development manifest packages the compiled Rust binaries against GNOME runt
 ## CI and publication
 
 `platform-checks.yml` checks the native workspace and runs shared/media/library tests on Windows, Apple Silicon, and Ubuntu. Pushes to `dev` also build native development packages and verify relocated packages. The Mac OBS job uses macOS 26; baseline library tests also cover macOS 15. `ui-checks.yml` runs on pushes to `dev`.
+
+For an Ubuntu beta, synchronize the workspace, Cargo lockfile, npm manifests and
+Tauri version, then push a tag such as `v0.6.0-beta.1` at that commit. The tag run
+requires shared/native regression checks and the complete Linux OBS job to pass,
+including package relocation and controlled X11 window capture. Only then does
+`publish-linux-beta` attach the `.deb`, Turkish test guide and SHA256 checksums to
+a GitHub prerelease. It verifies the tag matches the package version and keeps
+the release off GitHub's latest stable channel. Flatpak and the Mac OBS package
+are outside this Ubuntu beta publication job.
 
 Once recording backends and native acceptance checks pass, attach each platform package to one versioned GitHub Release. Keep development previews away from the existing production `latest.json`. Flatpak updates belong to its repository/package manager.
 

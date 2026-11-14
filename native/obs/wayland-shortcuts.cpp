@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // GlobalShortcuts portal: https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html
 #include "wayland-shortcuts.hpp"
+#include "shortcut-trigger.hpp"
 #include <gio/gio.h>
 #include <algorithm>
-#include <cctype>
 #include <unistd.h>
 
 namespace encore {
@@ -65,6 +65,11 @@ void wayland_shortcuts_configure(const std::string &trigger) {
     if (connection && !session.empty() && configured_trigger == trigger && warning.empty()) return;
     wayland_shortcuts_shutdown();
     configured_trigger = trigger;
+    preferred_trigger = portal_shortcut_trigger(trigger);
+    if (preferred_trigger.empty()) {
+        warning = "This save shortcut cannot be used on Wayland. Choose another shortcut in Settings or save from Encore's menu or library.";
+        return;
+    }
     GError *error = nullptr;
     connection = g_bus_get_sync(G_BUS_TYPE_SESSION, nullptr, &error);
     if (!connection) {
@@ -72,17 +77,6 @@ void wayland_shortcuts_configure(const std::string &trigger) {
         if (error) g_error_free(error);
         return;
     }
-    preferred_trigger = trigger;
-    std::transform(preferred_trigger.begin(), preferred_trigger.end(), preferred_trigger.begin(),
-        [](unsigned char character) { return std::toupper(character); });
-    const auto replace = [&](const std::string &from, const std::string &to) {
-        size_t offset = 0;
-        while ((offset = preferred_trigger.find(from, offset)) != std::string::npos) {
-            preferred_trigger.replace(offset, from.size(), to); offset += to.size();
-        }
-    };
-    replace("CONTROL+", "CTRL+"); replace("SUPER+", "LOGO+"); replace("COMMAND+", "LOGO+");
-    replace("META+", "LOGO+"); replace("ARROW", "");
     creating = true;
     warning = "Approve the save shortcut in the desktop permission dialog.";
     response_subscription = g_dbus_connection_signal_subscribe(connection, bus_name,

@@ -2,12 +2,13 @@
 
 Low-overhead Windows game clipping and multi-track replay studio built with Rust and Tauri 2.
 
-Cross-platform development continues on `dev`, targeting Apple Silicon macOS, Ubuntu 24.04+ x64, and Linux Flatpak. The first milestone is a library/editor preview; recording remains Windows-only until native backends are implemented and verified. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging, CI, and the remaining milestones.
+Cross-platform development continues on `dev`, targeting Apple Silicon macOS, Ubuntu 24.04+ x64, and Linux Flatpak. Native recording backends are experimental and still require real-device acceptance checks; Windows remains the supported recording release. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging, CI, and the remaining milestones.
 
 ## Download
 
 - **Windows Installer (x64):** [Download Encore (`Encore_0.5.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.5.0_x64-setup.exe)
 - **All Releases:** [GitHub Releases](https://github.com/yancelic/Encore/releases)
+- **Ubuntu beta testing:** Experimental Ubuntu 24.04+ x64 packages are published as prereleases. See the [Linux beta test guide](docs/linux-beta-testing.md) for installation, recording checks and log locations.
 
 > **Requirements:** Windows 10/11 (64-bit). The installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service, and `ffmpeg.exe`.
 
