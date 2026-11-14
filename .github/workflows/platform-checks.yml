@@ -44,11 +44,14 @@ jobs:
           dpkg-deb -x target/debian-artifact/target/release/bundle/deb/*.deb target/debian-extract
           cp target/debian-extract/usr/bin/encore-ui target/release/encore-ui
           find target/debian-extract -type f -name encore-recorder -exec cp '{}' target/release/encore-recorder \;
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: flatpak-cache
         with:
           path: .flatpak-builder
-          key: flatpak-native-${{ runner.os }}-${{ hashFiles('packaging/flatpak/*.json', 'packaging/flatpak/*.cmake') }}
-          restore-keys: flatpak-native-${{ runner.os }}-
+          key: flatpak-native-${{ runner.os }}-${{ hashFiles('packaging/flatpak/*.json', 'packaging/flatpak/*.cmake') }}-${{ github.run_id }}
+          restore-keys: |
+            flatpak-native-${{ runner.os }}-${{ hashFiles('packaging/flatpak/*.json', 'packaging/flatpak/*.cmake') }}-
+            flatpak-native-${{ runner.os }}-
       - name: Build and install the Flatpak development bundle
         run: |
           bash packaging/flatpak/build.sh
@@ -57,6 +60,11 @@ jobs:
         run: |
           dbus-run-session -- xvfb-run -a flatpak run --env=LIBGL_ALWAYS_SOFTWARE=1 --command=sh com.encore.clipper -c 'exec encore-recorder --self-test "$XDG_CACHE_HOME/self-test"'
           python3 native/obs/verify-self-test.py "$HOME/.var/app/com.encore.clipper/cache/self-test/encore-self-test.mp4"
+      - uses: actions/cache/save@v4
+        if: always() && steps.flatpak-cache.outputs.cache-primary-key != ''
+        with:
+          path: .flatpak-builder
+          key: ${{ steps.flatpak-cache.outputs.cache-primary-key }}
       - uses: actions/upload-artifact@v4
         with:
           name: encore-flatpak-linux-dev
@@ -102,6 +110,7 @@ jobs:
           name: encore-obs-bridge-apple-silicon-dev
           path: |
             tools/obs-runtime/lib/libencore_capture.dylib
+            target/native-idle-sample.txt
             target/native-self-test/*
             target/release/bundle/dmg/*.dmg
           retention-days: 14

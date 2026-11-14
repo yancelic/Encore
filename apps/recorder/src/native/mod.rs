@@ -537,24 +537,33 @@ fn idle_self_test(directory: PathBuf) -> Result<(), String> {
     request["config"]["diagnostic_no_permission_prompts"] = json!(true);
     let answer = engine.request(&request)?;
     if let Some(error) = answer["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
+    eprintln!("Encore idle regression: configured; polling devices and background events");
     let mut device_queries = 0;
-    for step in 0..750 {
+    let started = Instant::now();
+    let mut next_devices = started;
+    let mut step = 0;
+    while started.elapsed() < Duration::from_secs(15) {
         if step == 50 || step == 75 {
             engine.request(&json!({"action":"tray", "visible":step == 75}))?;
         }
         engine.tick();
-        if step % 25 == 0 {
+        if Instant::now() >= next_devices {
+            if device_queries == 0 { eprintln!("Encore idle regression: first audio device query"); }
             let devices = engine.request(&json!({"action":"audio_devices"}))?;
             if !devices["devices"].is_array() { return Err("Device discovery returned an invalid response".into()); }
             device_queries += 1;
+            if device_queries == 1 { eprintln!("Encore idle regression: first audio device query completed"); }
+            next_devices = Instant::now() + Duration::from_millis(250);
         }
         let status = engine.request(&json!({"action":"status"}))?;
         if status["quit_requested"].as_bool() == Some(true) { return Err("Native menu requested quit without a user action".into()); }
         if status["recording"].as_bool() == Some(true) { return Err("Idle test unexpectedly captured content".into()); }
         if let Some(error) = status["error"].as_str().filter(|error| !error.is_empty()) { return Err(error.into()); }
         thread::sleep(Duration::from_millis(20));
+        step += 1;
     }
     drop(engine);
+    if device_queries < 2 { return Err("Repeated audio device discovery was not exercised".into()); }
     println!("{}", json!({"ok":true, "idle_menu_lifecycle":true, "device_queries":device_queries}));
     Ok(())
 }

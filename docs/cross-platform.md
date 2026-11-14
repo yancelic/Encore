@@ -7,7 +7,7 @@ Work on `dev`. `main` is the production branch. Preview workflows upload develop
 | Target | Package | Current implementation |
 | --- | --- | --- |
 | Windows x64 | Existing signed NSIS installer | Full recorder, library, editor, and signed updates |
-| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Experimental OBS recorder; packaged encoder/replay tests pass; real-device startup failure under investigation |
+| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Experimental OBS recorder; real-device device-discovery crash identified and fixed; repeated discovery regression and device retest pending |
 | Ubuntu 24.04 x64 | `.deb` | Experimental OBS recorder, X11/Wayland capture, PipeWire application audio; native acceptance tests in progress |
 | Linux x64 via Flatpak | Development `.flatpak` bundle | Source-built OBS runtime and portal integration; sandbox build/test still pending |
 
@@ -79,7 +79,7 @@ Once recording backends and native acceptance checks pass, attach each platform 
 
 ## Remaining recording work, in order
 
-1. Resolve the reported Mac recorder shutdown and retest on the user's Tahoe 26.6.1 device. Both the main app and its helper declare capture usage and microphone entitlements; denied screen permission leaves capture idle. The package test checks the declarations and exercises the normal menu lifecycle as well as synthetic encoding.
+1. Validate the Mac device-discovery fix on the user's MacBook Pro M1 Pro (the crash report identifies macOS 26.5.2). The report traced a null-source properties request into the OBS ScreenCaptureKit audio plugin. Discovery and name-to-UID routing now use CoreAudio metadata; the package regression repeatedly queries devices in a live engine and queries them from an offline helper. Both app bundles declare capture usage and microphone entitlements; denied screen permission leaves capture idle.
 2. Finish native Linux acceptance checks: actual controlled X11 window capture, GTK file clipboard formats, and the Flatpak sandbox build/replay test.
 3. Validate recording on devices: 1080p60, 60-second bounded RAM replay, repeated saves without encoder restart, separate game/chat/microphone routing, audio synchronization, permissions denied/revoked, application restart, minimize/restore, display changes, sleep/wake, and recording while the library is closed. Ubuntu version, GPU and desktop session details are still pending from the user.
 4. Test native playback, mixed exports, Flatpak folder/file-transfer permissions, clean installs/upgrades, and signing before publishing supported packages.

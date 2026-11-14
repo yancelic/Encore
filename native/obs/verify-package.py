@@ -46,8 +46,23 @@ with tempfile.TemporaryDirectory(prefix='encore-package-') as temporary:
             subprocess.run(['lldb', '--batch', '-o', 'run', '-o', 'thread backtrace all', '--', *arguments],
                 cwd=directory, env=environment, timeout=30, check=False)
         raise
-    subprocess.check_call([*prefix, str(helper), '--idle-self-test', str(directory / 'idle-test')],
-        cwd=directory, env=environment, timeout=30)
+    idle = subprocess.Popen([*prefix, str(helper), '--idle-self-test', str(directory / 'idle-test')],
+        cwd=directory, env=environment)
+    try:
+        result = idle.wait(timeout=45)
+        if result:
+            raise subprocess.CalledProcessError(result, idle.args)
+    except subprocess.TimeoutExpired:
+        if sys.platform == 'darwin':
+            report = root / 'target/native-idle-sample.txt'
+            subprocess.run(['/usr/bin/sample', str(idle.pid), '1', '1', '-file', str(report)], timeout=15, check=False)
+            if report.is_file():
+                print('\n'.join(report.read_text(errors='replace').splitlines()[:180]), flush=True)
+        raise
+    finally:
+        if idle.poll() is None:
+            idle.kill()
+            idle.wait()
     subprocess.check_call([sys.executable, str(root / 'native/obs/verify-self-test.py'),
         str(directory / 'self-test/encore-self-test.mp4')])
     query = subprocess.check_output([*prefix, str(helper), '--query', 'diagnostics'],

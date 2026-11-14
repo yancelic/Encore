@@ -18,7 +18,7 @@
     {
       "name": "jansson",
       "buildsystem": "cmake-ninja",
-      "config-opts": ["-DJANSSON_EXAMPLES=OFF", "-DJANSSON_BUILD_DOCS=OFF", "-DJANSSON_BUILD_SHARED_LIBS=ON", "-DJANSSON_WITHOUT_TESTS=ON", "-DCMAKE_INSTALL_LIBDIR=lib"],
+      "config-opts": ["-DCMAKE_POLICY_VERSION_MINIMUM=3.5", "-DJANSSON_EXAMPLES=OFF", "-DJANSSON_BUILD_DOCS=OFF", "-DJANSSON_BUILD_SHARED_LIBS=ON", "-DJANSSON_WITHOUT_TESTS=ON", "-DCMAKE_INSTALL_LIBDIR=lib"],
       "sources": [{"type": "git", "url": "https://github.com/akheron/jansson.git", "commit": "684e18c927e89615c2d501737e90018f4930d6c5"}]
     },
     {
