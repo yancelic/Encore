@@ -16,10 +16,11 @@ The single captured window feeds OBS output channel 0 directly. Do not wrap it
 in a scene with relative coordinates: the canvas starts at 1920x1080 before the
 source is ready, and resizing it to the window's actual dimensions would also
 scale and displace the scene item. Output resolution is applied only by the
-video output downscaler. The synthetic `--self-test` draws a 2560x1440 source
+video output downscaler. The synthetic `--self-test` draws a 1280x720 source
 with four colored corner markers and encodes at 640x360; `verify-self-test.py`
 checks that all four corners survive the canvas resize and downscale. A uniform
-framebuffer clear alone cannot detect this regression.
+framebuffer clear alone cannot detect this regression. The fixture stays below
+1080p so GitHub's software-rendered virtual Macs can keep up with the test.
 
 On a real Mac, also verify Native and 1080p clips of a Retina game window with
 visible content at all four edges, including after resizing the window or

@@ -42,10 +42,10 @@ struct Tone {
 const char *video_name(void *) { return "Encore diagnostic video"; }
 void *video_create(obs_data_t *, obs_source_t *source) { return source; }
 void video_destroy(void *) {}
-// Larger than the 1920x1080 bootstrap canvas. The self-test encodes at 640x360,
-// exercising both the canvas resize and output downscale used on Retina Macs.
-uint32_t video_width(void *) { return 2560; }
-uint32_t video_height(void *) { return 1440; }
+// Different from the 1920x1080 bootstrap canvas. Keep this small enough for
+// software-rendered CI Macs while testing both canvas resize and downscale.
+uint32_t video_width(void *) { return 1280; }
+uint32_t video_height(void *) { return 720; }
 void video_render(void *, gs_effect_t *) {
     vec4 color{};
     const auto phase = (os_gettime_ns() / 100000000) % 3;
