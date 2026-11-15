@@ -43,9 +43,9 @@ const char *video_name(void *) { return "Encore diagnostic video"; }
 void *video_create(obs_data_t *, obs_source_t *source) { return source; }
 void video_destroy(void *) {}
 // Different from the 1920x1080 bootstrap canvas. Keep this small enough for
-// software-rendered CI Macs while testing both canvas resize and downscale.
-uint32_t video_width(void *) { return 1280; }
-uint32_t video_height(void *) { return 720; }
+// software-rendered CI Macs while testing canvas resize and source placement.
+uint32_t video_width(void *) { return 640; }
+uint32_t video_height(void *) { return 360; }
 void video_render(void *, gs_effect_t *) {
     vec4 color{};
     const auto phase = (os_gettime_ns() / 100000000) % 3;

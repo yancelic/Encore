@@ -166,6 +166,11 @@ struct Engine {
             static_cast<int64_t>(sw) * sh * fps * 20000 / (1920LL * 1080 * 60), 8000, 80000));
         obs_data_set_string(settings, "rate_control", "CBR");
         obs_data_set_string(settings, "preset", "veryfast");
+        if (obs_data_get_bool(config, "diagnostic_source")
+            && std::string(obs_data_get_string(config, "diagnostic_encoder")) == "obs_x264") {
+            obs_data_set_string(settings, "preset", "ultrafast");
+            obs_data_set_string(settings, "tune", "zerolatency");
+        }
         obs_data_set_int(settings, "keyint_sec", 1);
         obs_data_set_bool(settings, "bframes", false);
         OBSDataAutoRelease output_settings = obs_data_create();

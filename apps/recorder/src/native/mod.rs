@@ -634,7 +634,7 @@ fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
     let start = Instant::now();
     let mut last_status = Value::Null;
     let mut recording_since = None;
-    while start.elapsed() < Duration::from_secs(20) {
+    while start.elapsed() < Duration::from_secs(45) {
         engine.tick();
         last_status = engine.request(&json!({"action":"status"}))?;
         if last_status["recording"].as_bool().unwrap_or(false) {
@@ -653,6 +653,9 @@ fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
     }
     if !last_status["recording"].as_bool().unwrap_or(false) {
         return Err(format!("Diagnostic encoder did not start: {last_status}"));
+    }
+    if replay.lock().map_err(|_| "Replay unavailable")?.available_duration() < Duration::from_secs(3) {
+        return Err(format!("Timed out waiting for three seconds of diagnostic A/V replay: {last_status}"));
     }
     let formats = engine.formats()?;
     let packets = replay

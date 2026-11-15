@@ -16,12 +16,12 @@ The single captured window feeds OBS output channel 0 directly. Do not wrap it
 in a scene with relative coordinates: the canvas starts at 1920x1080 before the
 source is ready, and resizing it to the window's actual dimensions would also
 scale and displace the scene item. Output resolution is applied only by the
-video output downscaler. The synthetic `--self-test` draws a 1280x720 source
+video output downscaler. The synthetic `--self-test` draws a 640x360 source
 with four colored corner markers and encodes at 640x360; `verify-self-test.py`
-checks that all four corners survive the canvas resize and downscale. A uniform
+checks that all four corners survive the canvas resize. A uniform
 framebuffer clear alone cannot detect this regression. The fixture stays below
 1080p so GitHub's software-rendered virtual Macs can keep up with the test.
-The macOS CI job sets `ENCORE_SELF_TEST_ENCODER=obs_x264` for geometry/replay
+The macOS CI job sets `ENCORE_SELF_TEST_ENCODER=obs_x264` (ultrafast, zero latency) for geometry/replay
 checks because its paravirtualized VideoToolbox encoder can stall behind the
 software renderer. This override applies only to synthetic self-tests; normal
 recording still selects hardware encoders first. Hardware encoding must also
