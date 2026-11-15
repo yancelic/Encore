@@ -78,6 +78,10 @@ jobs:
     if: github.ref_type != 'tag'
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      # Geometry/replay checks run on Apple's software renderer in a VM.
+      # Real-device hardware encoder validation remains a separate test.
+      ENCORE_SELF_TEST_ENCODER: obs_x264
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable

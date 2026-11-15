@@ -135,6 +135,12 @@ struct Engine {
     }
 
     std::vector<std::string> video_encoders() {
+        // Explicit self-test override for virtual runners whose paravirtualized
+        // VideoToolbox encoder cannot keep up with software-rendered geometry.
+        // Normal capture always uses the hardware-first selection below.
+        const std::string diagnostic_encoder = obs_data_get_string(config, "diagnostic_encoder");
+        if (obs_data_get_bool(config, "diagnostic_source") && !diagnostic_encoder.empty())
+            return {diagnostic_encoder};
         std::vector<std::string> hardware, software;
         const char *id = nullptr;
         for (size_t i = 0; obs_enum_encoder_types(i, &id); ++i) {

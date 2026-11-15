@@ -21,6 +21,11 @@ with four colored corner markers and encodes at 640x360; `verify-self-test.py`
 checks that all four corners survive the canvas resize and downscale. A uniform
 framebuffer clear alone cannot detect this regression. The fixture stays below
 1080p so GitHub's software-rendered virtual Macs can keep up with the test.
+The macOS CI job sets `ENCORE_SELF_TEST_ENCODER=obs_x264` for geometry/replay
+checks because its paravirtualized VideoToolbox encoder can stall behind the
+software renderer. This override applies only to synthetic self-tests; normal
+recording still selects hardware encoders first. Hardware encoding must also
+be validated on a real Mac.
 
 On a real Mac, also verify Native and 1080p clips of a Retina game window with
 visible content at all four edges, including after resizing the window or

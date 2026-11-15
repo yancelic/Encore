@@ -619,6 +619,11 @@ fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
     }
     let mut request = configuration(&config)?;
     request["config"]["diagnostic_source"] = json!(!desktop_window);
+    if !desktop_window {
+        if let Ok(encoder) = std::env::var("ENCORE_SELF_TEST_ENCODER") {
+            request["config"]["diagnostic_encoder"] = json!(encoder);
+        }
+    }
     request["config"]["diagnostic_no_shortcut"] = json!(true);
     request["config"]["diagnostic_no_tray"] = json!(true);
     request["config"]["state_dir"] = json!(directory);
