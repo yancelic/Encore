@@ -54,16 +54,17 @@ void video_render(void *, gs_effect_t *) {
     color.z = phase == 2 ? 0.8f : 0.05f;
     color.w = 1.0f;
     auto *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
-    vec4 white{};
-    white.x = white.y = white.z = white.w = 1.0f;
-    gs_effect_set_vec4(gs_effect_get_param_by_name(effect, "color"), &white);
     auto draw = [&](float x, float y, uint32_t width, uint32_t height, const vec4 &fill) {
-        const float vertices[][2] = {{x, y}, {x + width, y}, {x, y + height},
-            {x, y + height}, {x + width, y}, {x + width, y + height}};
-        for (const auto &vertex : vertices) {
-            gs_color(vec4_to_rgba(&fill));
-            gs_vertex2f(vertex[0], vertex[1]);
-        }
+        gs_matrix_push();
+        gs_matrix_translate3f(x, y, 0.0f);
+        gs_effect_set_vec4(gs_effect_get_param_by_name(effect, "color"), &fill);
+        auto *technique = gs_effect_get_technique(effect, "Solid");
+        gs_technique_begin(technique);
+        gs_technique_begin_pass(technique, 0);
+        gs_draw_sprite(nullptr, 0, width, height);
+        gs_technique_end_pass(technique);
+        gs_technique_end(technique);
+        gs_matrix_pop();
     };
     // Draw geometry, not gs_clear: clearing the framebuffer ignores scene
     // transforms and would let a cropped or displaced source pass the test.
@@ -74,15 +75,10 @@ void video_render(void *, gs_effect_t *) {
     corners[2].z = 1.0f; // bottom left: blue
     corners[3].x = corners[3].y = corners[3].z = 1.0f; // bottom right: white
     const auto width = video_width(nullptr), height = video_height(nullptr);
-    // One draw call avoids repeated software OpenGL submissions on CI Macs.
-    while (gs_effect_loop(effect, "SolidColored")) {
-        gs_render_start(true);
-        draw(0, 0, width, height, color);
-        for (unsigned i = 0; i < 4; ++i)
-            draw(i & 1 ? width * 7 / 8 : 0, i & 2 ? height * 7 / 8 : 0,
-                 width / 8, height / 8, corners[i]);
-        gs_render_stop(GS_TRIS);
-    }
+    draw(0, 0, width, height, color);
+    for (unsigned i = 0; i < 4; ++i)
+        draw(i & 1 ? width * 7 / 8 : 0, i & 2 ? height * 7 / 8 : 0,
+             width / 8, height / 8, corners[i]);
 }
 const char *tone_name(void *) { return "Encore diagnostic tone"; }
 void *tone_create(obs_data_t *settings, obs_source_t *source) {
