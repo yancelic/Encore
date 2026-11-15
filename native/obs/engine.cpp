@@ -41,7 +41,6 @@ struct Engine {
     obs_source_t *video = nullptr;
     obs_source_t *audio[3]{};
     uint64_t audio_identity[3]{};
-    obs_scene_t *scene = nullptr;
     obs_output_t *output = nullptr;
     obs_encoder_t *encoders[4]{};
     obs_hotkey_id hotkey = OBS_INVALID_HOTKEY_ID;
@@ -98,7 +97,6 @@ struct Engine {
             }
         }
         for (unsigned i = 0; i < 4; ++i) obs_set_output_source(i, nullptr);
-        if (scene) { obs_scene_release(scene); scene = nullptr; }
         if (video) { obs_source_release(video); video = nullptr; }
         for (auto &source : audio) {
             if (source) obs_source_release(source);
@@ -308,9 +306,12 @@ struct Engine {
         video = obs_source_create(diagnostic ? "encore_test_video" : software ? encore::platform_video_fallback_source() : encore::platform_video_source(), "Encore selected window", settings, nullptr);
         if (!video) throw std::runtime_error("Could not capture the selected window. Check Screen Recording permissions or the desktop portal.");
         obs_source_set_audio_mixers(video, 0);
-        scene = obs_scene_create_private("Encore scene");
-        if (!scene || !obs_scene_add(scene, video)) throw std::runtime_error("Could not create the capture scene");
-        obs_set_output_source(0, obs_scene_get_source(scene));
+        // A scene item retains the bootstrap canvas as its scale reference. When
+        // start_output resets that canvas to the window's actual size, OBS's
+        // relative scene coordinates scale/offset the image again, cropping large
+        // windows (and shrinking small ones). We capture exactly one window, so
+        // render it directly at native size and let the video output downscale.
+        obs_set_output_source(0, video);
         if (diagnostic) {
             for (unsigned i = 0; i < 3; ++i) {
                 OBSDataAutoRelease tone = obs_data_create();

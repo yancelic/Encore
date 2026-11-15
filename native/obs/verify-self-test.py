@@ -12,6 +12,20 @@ def output(*args):
     return subprocess.check_output(args, stderr=subprocess.PIPE)
 
 
+def verify_corners(path):
+    frame = output('ffmpeg', '-v', 'error', '-ss', '1', '-i', str(path),
+                   '-map', '0:v:0', '-frames:v', '1', '-vf', 'scale=64:64',
+                   '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
+    assert len(frame) == 64 * 64 * 3, 'Missing diagnostic video frame'
+    for (x, y), expected in zip([(3, 3), (60, 3), (3, 60), (60, 60)],
+                               [(255, 0, 0), (0, 255, 0), (0, 0, 255), (255, 255, 255)]):
+        offset = (y * 64 + x) * 3
+        actual = tuple(frame[offset:offset + 3])
+        assert all(abs(a - b) < 50 for a, b in zip(actual, expected)), (
+            f'Captured window is cropped, displaced or scaled incorrectly at ({x}, {y}): '
+            f'expected {expected}, got {actual}')
+
+
 def verify(path, silent=False):
     metadata = json.loads(output('ffprobe', '-v', 'error', '-show_streams', '-of', 'json', str(path)))
     videos = [stream for stream in metadata['streams'] if stream['codec_type'] == 'video']
@@ -25,6 +39,8 @@ def verify(path, silent=False):
     video = output('ffmpeg', '-v', 'error', '-i', str(path), '-map', '0:v:0', '-vf', 'scale=1:1', '-pix_fmt', 'rgb24', '-f', 'rawvideo', '-')
     frames, variation = len(video) // 3, statistics.pstdev(video[::3])
     assert frames >= 60 and variation > 20, f'Insufficient or frozen captured video: frames={frames}, red_stddev={variation}'
+    if not silent:
+        verify_corners(path)
     frequencies = [440, 660, 880]
     for track, expected in enumerate(frequencies):
         samples = array('f')

@@ -42,8 +42,10 @@ struct Tone {
 const char *video_name(void *) { return "Encore diagnostic video"; }
 void *video_create(obs_data_t *, obs_source_t *source) { return source; }
 void video_destroy(void *) {}
-uint32_t video_width(void *) { return 640; }
-uint32_t video_height(void *) { return 360; }
+// Larger than the 1920x1080 bootstrap canvas. The self-test encodes at 640x360,
+// exercising both the canvas resize and output downscale used on Retina Macs.
+uint32_t video_width(void *) { return 2560; }
+uint32_t video_height(void *) { return 1440; }
 void video_render(void *, gs_effect_t *) {
     vec4 color{};
     const auto phase = (os_gettime_ns() / 100000000) % 3;
@@ -51,7 +53,27 @@ void video_render(void *, gs_effect_t *) {
     color.y = phase == 1 ? 0.8f : 0.05f;
     color.z = phase == 2 ? 0.8f : 0.05f;
     color.w = 1.0f;
-    gs_clear(GS_CLEAR_COLOR, &color, 0.0f, 0);
+    auto *effect = obs_get_base_effect(OBS_EFFECT_SOLID);
+    auto draw = [&](float x, float y, uint32_t width, uint32_t height, const vec4 &fill) {
+        gs_matrix_push();
+        gs_matrix_translate3f(x, y, 0.0f);
+        gs_effect_set_vec4(gs_effect_get_param_by_name(effect, "color"), &fill);
+        while (gs_effect_loop(effect, "Solid")) gs_draw_sprite(nullptr, 0, width, height);
+        gs_matrix_pop();
+    };
+    // Draw geometry, not gs_clear: clearing the framebuffer ignores scene
+    // transforms and would let a cropped or displaced source pass the test.
+    draw(0, 0, video_width(nullptr), video_height(nullptr), color);
+    vec4 corners[4]{};
+    for (auto &corner : corners) corner.w = 1.0f;
+    corners[0].x = 1.0f; // top left: red
+    corners[1].y = 1.0f; // top right: green
+    corners[2].z = 1.0f; // bottom left: blue
+    corners[3].x = corners[3].y = corners[3].z = 1.0f; // bottom right: white
+    const auto width = video_width(nullptr), height = video_height(nullptr);
+    for (unsigned i = 0; i < 4; ++i)
+        draw(i & 1 ? width * 7 / 8 : 0, i & 2 ? height * 7 / 8 : 0,
+             width / 8, height / 8, corners[i]);
 }
 const char *tone_name(void *) { return "Encore diagnostic tone"; }
 void *tone_create(obs_data_t *settings, obs_source_t *source) {
@@ -63,7 +85,7 @@ void tone_destroy(void *data) { delete static_cast<Tone *>(data); }
 void encore_register_diagnostic_sources() {
     obs_source_info video{};
     video.id = "encore_test_video"; video.type = OBS_SOURCE_TYPE_INPUT;
-    video.output_flags = OBS_SOURCE_VIDEO;
+    video.output_flags = OBS_SOURCE_VIDEO | OBS_SOURCE_CUSTOM_DRAW;
     video.get_name = video_name; video.create = video_create; video.destroy = video_destroy;
     video.get_width = video_width; video.get_height = video_height; video.video_render = video_render;
     obs_register_source(&video);
