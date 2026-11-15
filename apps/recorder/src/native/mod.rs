@@ -634,7 +634,15 @@ fn self_test(directory: PathBuf, desktop_window: bool) -> Result<(), String> {
         last_status = engine.request(&json!({"action":"status"}))?;
         if last_status["recording"].as_bool().unwrap_or(false) {
             let since = recording_since.get_or_insert_with(Instant::now);
-            if since.elapsed() >= Duration::from_secs(5) { break; }
+            // A virtual Mac can render slower than real time and VideoToolbox
+            // may buffer its first packets. Encoder startup alone does not mean
+            // that a complete A/V replay has reached the ring buffer yet.
+            if since.elapsed() >= Duration::from_secs(5)
+                && replay.lock().map_err(|_| "Replay unavailable")?
+                    .available_duration() >= Duration::from_secs(3)
+            {
+                break;
+            }
         } else { recording_since = None; }
         thread::sleep(Duration::from_millis(10));
     }
