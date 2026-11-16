@@ -24,8 +24,13 @@ if(APPLE AND ENCORE_OBS_SOURCE AND ENCORE_OBS_DEPS AND ENCORE_OBS_RUNTIME)
   set(FFMPEG_TARGET encore_ffmpeg)
 else()
   pkg_check_modules(FFMPEG REQUIRED IMPORTED_TARGET libavformat libavcodec libavutil)
-  pkg_check_modules(LIBOBS REQUIRED IMPORTED_TARGET libobs)
-  add_library(OBS::libobs ALIAS PkgConfig::LIBOBS)
+  # Source-built OBS exports the installed headers and public dependencies through
+  # CMake. Its generated .pc can leak private C-only flags into C++ consumers.
+  find_package(libobs CONFIG QUIET)
+  if(NOT TARGET OBS::libobs)
+    pkg_check_modules(LIBOBS REQUIRED IMPORTED_TARGET libobs)
+    add_library(OBS::libobs ALIAS PkgConfig::LIBOBS)
+  endif()
   set(FFMPEG_TARGET PkgConfig::FFMPEG)
 endif()
 
