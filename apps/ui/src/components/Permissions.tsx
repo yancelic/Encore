@@ -9,10 +9,13 @@ import {
 } from '../api';
 import type { MacosPermissions, PermissionKind, PermissionState } from '../types';
 
-const ITEMS: { kind: PermissionKind; label: string; detail: string }[] = [
-  { kind: 'screen', label: 'Screen & System Audio Recording', detail: 'Captures the game window, plus game and chat audio.' },
-  { kind: 'microphone', label: 'Microphone', detail: 'Records your voice as its own track.' },
-  { kind: 'input_monitoring', label: 'Input Monitoring', detail: 'Lets the save shortcut work while a game is focused.' },
+// macOS files Screen Recording and Microphone under the outer Encore app that
+// contains the recorder, but Input Monitoring under the recorder bundle itself.
+// Naming the right entry matters: switching on the other one changes nothing.
+const ITEMS: { kind: PermissionKind; label: string; detail: string; listedAs: string }[] = [
+  { kind: 'screen', label: 'Screen & System Audio Recording', detail: 'Captures the game window, plus game and chat audio.', listedAs: 'Encore' },
+  { kind: 'microphone', label: 'Microphone', detail: 'Records your voice as its own track.', listedAs: 'Encore' },
+  { kind: 'input_monitoring', label: 'Input Monitoring', detail: 'Lets the save shortcut work while a game is focused.', listedAs: 'Encore Recorder' },
 ];
 
 const STATE_LABEL: Record<PermissionState, string> = {
@@ -33,7 +36,6 @@ export function PermissionSettings() {
   const [working, setWorking] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [confirmReset, setConfirmReset] = useState(false);
-  const [screenAsked, setScreenAsked] = useState(false);
   const mounted = useRef(true);
 
   const refresh = useCallback(() => {
@@ -73,7 +75,6 @@ export function PermissionSettings() {
   // The recorder asks macOS first (that adds Encore Recorder to the list), then
   // opens the matching System Settings pane wherever the switch has to be turned on.
   const allow = (kind: PermissionKind) => run(kind, () => {
-    if (kind === 'screen') setScreenAsked(true);
     return requestMacosPermission(kind);
   });
 
@@ -86,13 +87,12 @@ export function PermissionSettings() {
     );
   }
 
-  const appName = permissions.app_name ?? 'Encore Recorder';
   return (
     <section className="settings-section permission-settings" aria-labelledby="permissions-heading">
       <div>
         <h3 id="permissions-heading">Permissions</h3>
         <p className="capture-mode-help">
-          macOS lists these under <strong>{appName}</strong> in System Settings › Privacy &amp; Security.
+          In System Settings › Privacy &amp; Security, switch on the entry named under each permission.
         </p>
       </div>
 
@@ -109,7 +109,7 @@ export function PermissionSettings() {
         </div>
       ) : (
         <ul className="permission-list">
-          {ITEMS.map(({ kind, label, detail }) => {
+          {ITEMS.map(({ kind, label, detail, listedAs }) => {
             const state = permissions[kind] ?? 'not_determined';
             const granted = state === 'granted';
             const Icon = granted ? Check : X;
@@ -121,6 +121,7 @@ export function PermissionSettings() {
                 <div className="permission-text">
                   <span className="permission-label">{label}</span>
                   <span className="capture-mode-help">{detail}</span>
+                  {!granted && <span className="capture-mode-help">Switch on <strong>{listedAs}</strong> in System Settings.</span>}
                 </div>
                 <span className={`permission-badge ${granted ? 'granted' : 'missing'}`}>{STATE_LABEL[state]}</span>
                 {!granted && (
@@ -135,9 +136,9 @@ export function PermissionSettings() {
         </ul>
       )}
 
-      {permissions.running && permissions.screen !== 'granted' && screenAsked && (
+      {permissions.running && permissions.screen !== 'granted' && (
         <div className="permission-notice" role="status">
-          <span>After allowing screen recording in System Settings, restart the recorder to apply it.</span>
+          <span>macOS applies a new Screen Recording permission only to a recorder that starts afterwards. Already switched it on? Restart the recorder.</span>
           <button type="button" className="btn-secondary" disabled={!!working}
             onClick={() => void run('restart', restartRecorder)}>
             {working === 'restart' ? 'Restarting…' : 'Restart recorder'}
@@ -173,7 +174,6 @@ export function PermissionSettings() {
             <button type="button" className="btn-secondary" disabled={!!working}
               onClick={() => void run('reset', resetMacosPermissions).then(() => {
                 setConfirmReset(false);
-                setScreenAsked(false);
               })}>
               {working === 'reset' ? 'Resetting…' : 'Reset now'}
             </button>
