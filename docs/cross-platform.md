@@ -41,8 +41,35 @@ brew install ffmpeg cmake pkg-config
 npm --prefix apps/ui ci
 python3 apps/ui/scripts/prepare-macos-ffmpeg.py
 python3 native/obs/prepare-macos.py
+npm --prefix apps/ui run setup:macos-signing   # once per Mac
 npm --prefix apps/ui run build:preview
 ```
+
+Before the first build on a Mac, create a local signing identity once:
+
+```sh
+npm --prefix apps/ui run setup:macos-signing
+```
+
+macOS remembers privacy permissions by code signature. Ad-hoc builds get a new
+signature on every rebuild, so Screen Recording, Microphone and Input Monitoring
+would have to be granted again after each build, and old entries remain in System
+Settings without applying to the new build. The packaging scripts sign with the
+"Encore Local Development" certificate when it exists (or `ENCORE_CODESIGN_IDENTITY`
+/ `APPLE_SIGNING_IDENTITY` when set), so permissions granted once survive rebuilds.
+Without it they fall back to ad-hoc signing and print a warning.
+
+### macOS permissions
+
+All capture permissions belong to **Encore Recorder** (`com.encore.recorder`). The
+library launches the recorder through LaunchServices, the same way the login agent
+does, so macOS never files a request under the library app (`com.encore.clipper`).
+Settings → Permissions (macOS only) shows Screen & System Audio Recording,
+Microphone and Input Monitoring, requests each one through the recorder, opens the
+matching System Settings pane once a decision exists, and restarts the recorder
+after a screen-recording grant. **Reset permissions** runs `tccutil reset All` for
+both bundle identifiers, which also removes stale entries left by earlier ad-hoc
+builds (for example a Microphone switch that cannot be turned on).
 
 The preparation script copies FFmpeg and its non-system Homebrew dylibs, rewrites load paths, verifies ARM64 support, and applies ad-hoc signatures. The preview bundles these resources so users do not need Homebrew. This is not Apple Developer ID signing or notarization. Resolve and sign all bundled components with the release identity before a notarized public release.
 

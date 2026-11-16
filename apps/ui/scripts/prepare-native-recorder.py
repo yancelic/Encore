@@ -26,5 +26,5 @@ if sys.platform == 'darwin':
             'NSAudioCaptureUsageDescription': 'Encore records game and chat audio in separate tracks for your clips.',
             'NSSupportsAutomaticTermination': False, 'NSSupportsSuddenTermination': False,
         }, file)
-    subprocess.check_call(['codesign', '--force', '--sign', '-', '--entitlements',
-        str(root / 'apps/ui/src-tauri/entitlements.macos.plist'), str(helper.parent)])
+    import macos_signing
+    macos_signing.sign(helper.parent, entitlements=root / 'apps/ui/src-tauri/entitlements.macos.plist')

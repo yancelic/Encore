@@ -4,6 +4,8 @@
 #import <ApplicationServices/ApplicationServices.h>
 #import <AVFoundation/AVFoundation.h>
 #import <CoreAudio/CoreAudio.h>
+#import <IOKit/hidsystem/IOHIDLib.h>
+#import <Security/Security.h>
 #include <unistd.h>
 #include <cstdio>
 
@@ -14,7 +16,63 @@ namespace { std::string tray_action; NSStatusItem *tray = nil; NSMenuItem *tray_
 @implementation EncoreTrayDelegate
 - (void)activate:(id)sender { tray_action = [[sender representedObject] UTF8String]; }
 @end
-namespace { EncoreTrayDelegate *tray_delegate = nil; }
+namespace {
+EncoreTrayDelegate *tray_delegate = nil;
+bool screen_requested = false;
+
+const char *microphone_state() {
+    switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]) {
+    case AVAuthorizationStatusAuthorized: return "granted";
+    case AVAuthorizationStatusDenied: return "denied";
+    case AVAuthorizationStatusRestricted: return "restricted";
+    default: return "not_determined";
+    }
+}
+
+const char *input_monitoring_state() {
+    switch (IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)) {
+    case kIOHIDAccessTypeGranted: return "granted";
+    case kIOHIDAccessTypeDenied: return "denied";
+    default: return "not_determined";
+    }
+}
+
+// The screen preflight result is cached for the process lifetime, so a grant made
+// in System Settings is only visible after the recorder restarts.
+const char *screen_state() {
+    if (CGPreflightScreenCaptureAccess()) return "granted";
+    return screen_requested ? "denied" : "not_determined";
+}
+
+// TCC remembers an app by its designated requirement. Ad-hoc signatures pin that
+// requirement to the binary hash, so every rebuild looks like a different app.
+void describe_signature(obs_data_t *result) {
+    bool adhoc = true;
+    NSString *signer = nil;
+    SecCodeRef code = nullptr;
+    if (SecCodeCopySelf(kSecCSDefaultFlags, &code) == errSecSuccess) {
+        SecStaticCodeRef static_code = nullptr;
+        if (SecCodeCopyStaticCode(code, kSecCSDefaultFlags, &static_code) == errSecSuccess) {
+            CFDictionaryRef info = nullptr;
+            if (SecCodeCopySigningInformation(static_code, kSecCSSigningInformation, &info) == errSecSuccess && info) {
+                NSDictionary *details = (__bridge NSDictionary *)info;
+                NSNumber *flags = details[(id)kSecCodeInfoFlags];
+                NSArray *certificates = details[(id)kSecCodeInfoCertificates];
+                adhoc = !certificates.count || (flags && (flags.unsignedIntValue & kSecCodeSignatureAdhoc));
+                if (certificates.count) {
+                    CFStringRef summary = SecCertificateCopySubjectSummary((__bridge SecCertificateRef)certificates[0]);
+                    if (summary) { signer = [[(__bridge NSString *)summary copy] autorelease]; CFRelease(summary); }
+                }
+                CFRelease(info);
+            }
+            CFRelease(static_code);
+        }
+        CFRelease(code);
+    }
+    obs_data_set_bool(result, "adhoc_signature", adhoc);
+    obs_data_set_string(result, "signed_by", signer ? signer.UTF8String : "");
+}
+}
 
 namespace encore {
 bool platform_init(std::string &) {
@@ -82,8 +140,8 @@ bool platform_microphone_ready(std::string &warning) {
             requested = true;
             [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) {}];
         }
-        warning = "Allow Encore Recorder to use the microphone in the system permission dialog.";
-    } else warning = "Microphone permission is disabled. Enable Encore Recorder in System Settings > Privacy & Security > Microphone.";
+        warning = "Allow Encore Recorder to use the microphone in the system permission dialog, or use Settings > Permissions in Encore.";
+    } else warning = "Microphone permission is disabled. Open Settings > Permissions in Encore, or enable Encore Recorder in System Settings > Privacy & Security > Microphone.";
     return false;
 }
 void platform_configure_hotkey(const std::string &) {
@@ -91,7 +149,7 @@ void platform_configure_hotkey(const std::string &) {
     if (!CGPreflightListenEventAccess() && !requested) { requested = true; CGRequestListenEventAccess(); }
 }
 std::string platform_hotkey_warning() {
-    return CGPreflightListenEventAccess() ? "" : "Allow Encore Recorder in System Settings > Privacy & Security > Input Monitoring to save replays while another app is focused.";
+    return CGPreflightListenEventAccess() ? "" : "Allow Encore Recorder in Input Monitoring (Settings > Permissions in Encore) to save replays while another app is focused.";
 }
 void platform_request_background(bool) {}
 obs_data_t *platform_background_status() {
@@ -104,14 +162,45 @@ const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
 const char *platform_video_source() { return "screen_capture"; }
 const char *platform_video_fallback_source() { return nullptr; }
 bool platform_video_ready(std::string &warning) {
-    static bool requested = false;
     if (CGPreflightScreenCaptureAccess()) return true;
-    if (!requested) {
-        requested = true;
+    if (!screen_requested) {
+        screen_requested = true;
         if (CGRequestScreenCaptureAccess()) return true;
     }
-    warning = "Allow Encore in System Settings > Privacy & Security > Screen & System Audio Recording, then restart the recorder to apply the permission.";
+    warning = "Allow Encore Recorder in Screen & System Audio Recording (Settings > Permissions in Encore), then restart the recorder to apply the permission.";
     return false;
+}
+
+obs_data_t *platform_permissions() {
+    auto *result = obs_data_create();
+    @autoreleasepool {
+        NSBundle *bundle = NSBundle.mainBundle;
+        NSString *name = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+        if (!name) name = @"Encore Recorder";
+        obs_data_set_string(result, "bundle_id", bundle.bundleIdentifier ? bundle.bundleIdentifier.UTF8String : "");
+        obs_data_set_string(result, "app_name", name.UTF8String);
+        obs_data_set_string(result, "screen", screen_state());
+        obs_data_set_string(result, "microphone", microphone_state());
+        obs_data_set_string(result, "input_monitoring", input_monitoring_state());
+        // Started by launchd (LaunchServices or the login agent) the recorder is its own
+        // responsible process. Spawned directly by the library, macOS would attribute
+        // its privacy requests to the library app instead.
+        obs_data_set_bool(result, "independent", getppid() == 1);
+        describe_signature(result);
+    }
+    return result;
+}
+
+void platform_request_permission(const std::string &kind) {
+    if (kind == "screen") {
+        screen_requested = true;
+        CGRequestScreenCaptureAccess();
+    } else if (kind == "microphone") {
+        if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusNotDetermined)
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) {}];
+    } else if (kind == "input_monitoring") {
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+    }
 }
 
 std::vector<Application> platform_applications() {

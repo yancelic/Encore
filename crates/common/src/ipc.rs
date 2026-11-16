@@ -57,6 +57,10 @@ pub enum NativeCommand {
     GetDiagnostics,
     SetAutostart(bool),
     GetAutostartPermission,
+    /// macOS privacy permissions held by the recorder, which is the only process that captures.
+    GetPermissions,
+    /// Ask the recorder to show the system prompt for `screen`, `microphone` or `input_monitoring`.
+    RequestPermission(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

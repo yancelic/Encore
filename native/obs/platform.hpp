@@ -37,6 +37,10 @@ const char *platform_graphics_module();
 const char *platform_video_source();
 const char *platform_video_fallback_source();
 bool platform_video_ready(std::string &warning);
+/* Privacy permissions held by this process. Only macOS reports entries; other
+ * platforms return an empty object because portals grant access per request. */
+obs_data_t *platform_permissions();
+void platform_request_permission(const std::string &kind);
 void platform_video_settings(obs_data_t *settings, const Application &application);
 const char *platform_audio_source(bool microphone, bool application);
 void platform_audio_settings(obs_data_t *settings, const std::string &selection, bool application);

@@ -78,3 +78,43 @@ test('Wayland uses the system window picker and explicit application audio', asy
   expect(saved.mode).toBe('GameDetection');
   expect(errors).toEqual([]);
 });
+
+test('macOS settings manage every recorder permission in one place', async ({ page }) => {
+  const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true,
+    permissions: { screen: 'not_determined', microphone: 'not_determined', input_monitoring: 'denied', adhoc_signature: true } });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  const section = page.getByRole('region', { name: 'Permissions', exact: true });
+  await expect(section).toContainText('Encore Recorder');
+  await expect(section).toContainText('ad-hoc signature');
+
+  const microphone = section.getByRole('listitem').filter({ hasText: 'Microphone' });
+  await expect(microphone).toContainText('Not allowed');
+  await microphone.getByRole('button', { name: 'Allow Microphone', exact: true }).click();
+  await expect(microphone).toContainText('Allowed');
+  await expect(microphone.getByRole('button')).toHaveCount(0);
+  expect((await calls(page, 'request_macos_permission'))[0].args.kind).toBe('microphone');
+
+  const input = section.getByRole('listitem').filter({ hasText: 'Input Monitoring' });
+  await input.getByRole('button', { name: 'Allow Input Monitoring', exact: true }).click();
+  expect((await calls(page, 'request_macos_permission'))[1].args.kind).toBe('input_monitoring');
+
+  const screen = section.getByRole('listitem').filter({ hasText: 'Screen & System Audio Recording' });
+  await screen.getByRole('button', { name: 'Allow Screen & System Audio Recording', exact: true }).click();
+  await section.getByRole('button', { name: 'Restart recorder', exact: true }).click();
+  await expect(screen).toContainText('Allowed');
+
+  await section.getByRole('button', { name: 'Reset permissions', exact: true }).click();
+  await section.getByRole('button', { name: 'Reset now', exact: true }).click();
+  await expect.poll(() => calls(page, 'reset_macos_permissions')).toHaveLength(1);
+  await expect(microphone).toContainText('Not allowed');
+  expect(errors).toEqual([]);
+});
+
+for (const platform of ['windows', 'linux'] as const) {
+  test(`${platform} settings do not show the macOS permissions section`, async ({ page }) => {
+    await mockDesktop(page, { platform, nativeRecording: true });
+    await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Permissions', exact: true })).toHaveCount(0);
+    expect(await calls(page, 'get_macos_permissions')).toHaveLength(0);
+  });
+}

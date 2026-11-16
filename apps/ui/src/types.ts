@@ -82,3 +82,21 @@ export interface ToastMessage {
   kind: 'success' | 'error' | 'info';
   text: string;
 }
+
+export type PermissionKind = 'screen' | 'microphone' | 'input_monitoring';
+export type PermissionState = 'granted' | 'denied' | 'not_determined' | 'restricted';
+
+/** Privacy permissions held by the macOS recorder bundle (Encore Recorder). */
+export interface MacosPermissions {
+  running: boolean;
+  bundle_id?: string;
+  app_name?: string;
+  screen?: PermissionState;
+  microphone?: PermissionState;
+  input_monitoring?: PermissionState;
+  /** False when the library spawned the recorder directly, so macOS may attribute requests to "Encore". */
+  independent?: boolean;
+  /** Ad-hoc builds get a new identity on every rebuild, so macOS asks again. */
+  adhoc_signature?: boolean;
+  signed_by?: string;
+}
