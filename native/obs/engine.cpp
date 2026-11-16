@@ -612,6 +612,11 @@ extern "C" const char *ec_request(void *handle, const char *json) {
             OBSDataAutoRelease result = encore::platform_background_status();
             engine->reply = obs_data_get_json(result);
             return engine->reply.c_str();
+        } else if (action == "permissions" || action == "request_permission") {
+            if (action == "request_permission") encore::platform_request_permission(obs_data_get_string(request, "kind"));
+            OBSDataAutoRelease result = encore::platform_permissions();
+            engine->reply = obs_data_get_json(result);
+            return engine->reply.c_str();
         } else if (action == "select_source") {
             engine->clear_capture();
             const auto path = fs::path(obs_data_get_string(engine->config, "state_dir")) / "capture-source.json";

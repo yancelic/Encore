@@ -122,6 +122,8 @@ const char *platform_graphics_module() { return "libobs-opengl.so"; }
 const char *platform_video_source() { return wayland ? "pipewire-window-capture-source" : "xcomposite_input"; }
 const char *platform_video_fallback_source() { return wayland ? nullptr : "encore_x11_window"; }
 bool platform_video_ready(std::string &) { return true; } // The Wayland source obtains its portal grant itself.
+obs_data_t *platform_permissions() { return obs_data_create(); }
+void platform_request_permission(const std::string &) {}
 
 std::vector<Application> platform_applications() {
     std::vector<Application> result;

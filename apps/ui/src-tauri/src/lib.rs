@@ -160,6 +160,11 @@ pub fn launch_recorder_blocking(res_dir: Option<&Path>) -> Result<(), String> {
     let _ = std::fs::create_dir_all(Config::dir());
     let log = std::fs::OpenOptions::new().create(true).append(true).open(&log_path)
         .map_err(|e| format!("Cannot create recorder log: {e}"))?;
+    #[cfg(target_os = "macos")]
+    if let Some(bundle) = macos_permissions::recorder_bundle(&exe) {
+        drop(log);
+        return macos_permissions::launch_recorder_bundle(&bundle, &log_path);
+    }
     let mut child = Command::new(&exe)
         .background()
         .stdin(Stdio::null())
@@ -593,6 +598,69 @@ fn reveal_in_explorer(path: String) -> Result<(), String> {
     encore_common::platform::reveal_path(Path::new(&path))
 }
 
+#[cfg(target_os = "macos")]
+mod macos_permissions;
+
+/// macOS privacy permissions are owned by the recorder bundle, so every query and
+/// request goes through the running recorder rather than the library process.
+#[tauri::command]
+async fn get_macos_permissions() -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "macos")]
+    return run_blocking(macos_permissions::status).await;
+    #[cfg(not(target_os = "macos"))]
+    Err("Permissions are managed by the operating system on this platform".into())
+}
+
+#[tauri::command]
+async fn request_macos_permission(app: AppHandle, kind: String) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let res_dir = app.path().resource_dir().ok();
+        return run_blocking(move || macos_permissions::request(res_dir.as_deref(), &kind)).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = (app, kind); Err("Permissions are managed by the operating system on this platform".into()) }
+}
+
+#[tauri::command]
+fn open_macos_privacy_settings(kind: String) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    return macos_permissions::open_settings(&kind);
+    #[cfg(not(target_os = "macos"))]
+    { let _ = kind; Err("Privacy settings are only available on macOS".into()) }
+}
+
+#[tauri::command]
+async fn reset_macos_permissions(app: AppHandle) -> Result<serde_json::Value, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let _work = lifecycle::global().begin_export()?;
+        let res_dir = app.path().resource_dir().ok();
+        return run_blocking(move || macos_permissions::reset(res_dir.as_deref())).await;
+    }
+    #[cfg(not(target_os = "macos"))]
+    { let _ = app; Err("Permissions are managed by the operating system on this platform".into()) }
+}
+
+#[tauri::command]
+async fn restart_recorder(app: AppHandle) -> Result<(), String> {
+    let _work = lifecycle::global().begin_export()?;
+    let res_dir = app.path().resource_dir().ok();
+    run_blocking(move || {
+        stop_recorder_blocking();
+        launch_recorder_blocking(res_dir.as_deref())
+    }).await
+}
+
+/// Ask a running recorder to exit and wait until its IPC endpoint disappears.
+pub fn stop_recorder_blocking() {
+    if !matches!(ipc::send_request(&IpcRequest::Shutdown), Ok(IpcResponse::Ok)) { return; }
+    for _ in 0..100 {
+        if ipc::send_request(&IpcRequest::GetStatus).is_err() { return; }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+}
+
 #[tauri::command]
 fn get_platform_capabilities() -> encore_common::platform::PlatformCapabilities {
     encore_common::platform::capabilities()
@@ -715,6 +783,11 @@ pub fn run() {
             select_capture_source,
             pick_game_executable,
             get_platform_capabilities,
+            get_macos_permissions,
+            request_macos_permission,
+            open_macos_privacy_settings,
+            reset_macos_permissions,
+            restart_recorder,
             get_config,
             save_config,
             pick_clips_folder,

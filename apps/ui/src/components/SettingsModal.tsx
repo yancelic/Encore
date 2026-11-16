@@ -16,6 +16,7 @@ import type { ThemePreference } from '../theme';
 import type { Updater } from '../updater';
 import { UpdateSettings } from './Updates';
 import { GamePicker } from './GamePicker';
+import { PermissionSettings } from './Permissions';
 
 interface SettingsModalProps {
   updater: Updater;
@@ -311,6 +312,7 @@ export function SettingsModal({
               immediately.
             </p>
           </section>
+          {platform.os === 'macos' && platform.recording && <PermissionSettings />}
           <UpdateSettings updater={updater} />
           {!platform.recording && <p className="capture-mode-help" role="status">
             Recording is not available in this preview yet. Choose a clips folder to browse, edit and export existing MP4 files.

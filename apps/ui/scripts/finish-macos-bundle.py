@@ -17,7 +17,8 @@ for name in ['obs-runtime', 'Encore Recorder.app']:
     if destination.exists():
         shutil.rmtree(destination)
     subprocess.check_call(['ditto', str(root / 'tools' / name), str(destination)])
-subprocess.check_call(['codesign', '--force', '--sign', '-', '--preserve-metadata=entitlements', str(app)])
+import macos_signing
+macos_signing.sign(app, preserve_entitlements=True)
 subprocess.check_call(['codesign', '--verify', '--deep', '--strict', str(app)])
 staging = root / 'target/native-dmg'
 staging.mkdir(exist_ok=True)

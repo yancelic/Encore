@@ -233,13 +233,17 @@ fn native_data(engine: &mut ffi::Engine, command: NativeCommand) -> Result<IpcRe
     if let NativeCommand::SetAutostart(enabled) = command {
         return Ok(IpcResponse::NativeData(engine.request(&json!({"action":"background", "autostart":enabled}))?));
     }
+    if let NativeCommand::RequestPermission(kind) = command {
+        return Ok(IpcResponse::NativeData(engine.request(&json!({"action":"request_permission", "kind":kind}))?));
+    }
     let action = match command {
         NativeCommand::ListCaptureApplications => "applications",
         NativeCommand::ListAudioApplications => "audio_applications",
         NativeCommand::SelectCaptureSource => "select_source",
         NativeCommand::GetDiagnostics => "diagnostics",
         NativeCommand::GetAutostartPermission => "background_status",
-        NativeCommand::SetAutostart(_) => unreachable!(),
+        NativeCommand::GetPermissions => "permissions",
+        NativeCommand::SetAutostart(_) | NativeCommand::RequestPermission(_) => unreachable!(),
     };
     Ok(IpcResponse::NativeData(
         engine.request(&json!({"action":action}))?,

@@ -13,7 +13,8 @@
     "pretest:ui": "npm run build",
     "test:ui": "playwright test",
     "tauri": "tauri",
-    "build:preview": "node scripts/build-preview.mjs"
+    "build:preview": "node scripts/build-preview.mjs",
+    "setup:macos-signing": "bash scripts/setup-macos-dev-signing.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",
