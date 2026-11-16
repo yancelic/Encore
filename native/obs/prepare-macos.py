@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import tempfile
 import urllib.request
 
 OBS_COMMIT = 'dcdbd2e9048ae66237fdab32dbba72b745b1b9c5'
@@ -35,7 +36,13 @@ def copy(path, destination):
             destination.unlink()
         destination.symlink_to(path.readlink())
     elif path.is_dir():
-        shutil.copytree(path, destination, symlinks=True, dirs_exist_ok=True)
+        # copytree cannot replace the symlinks inside an existing framework, so a
+        # second preparation run starts from a fresh copy.
+        if destination.is_symlink() or destination.is_file():
+            destination.unlink()
+        elif destination.exists():
+            shutil.rmtree(destination)
+        shutil.copytree(path, destination, symlinks=True)
     else:
         shutil.copy2(path, destination)
 
@@ -74,8 +81,9 @@ def prepare():
     for library in (deps / 'lib').iterdir():
         if '.dylib' in library.name or library.suffix == '.framework':
             copy(library, frameworks / library.name)
-    mount = cache / 'mounted-obs'
-    mount.mkdir(exist_ok=True)
+    # Mount on the system volume: hdiutil refuses mount points on some external
+    # (non-APFS) drives, where the repository may live.
+    mount = Path(tempfile.mkdtemp(prefix='encore-obs-'))
     subprocess.check_call(['hdiutil', 'attach', '-nobrowse', '-readonly', '-mountpoint', str(mount), str(dmg)])
     try:
         app = mount / 'OBS.app' / 'Contents'
@@ -93,6 +101,8 @@ def prepare():
             copy(plugin, plugins / plugin.name)
     finally:
         subprocess.check_call(['hdiutil', 'detach', str(mount)])
+        if mount.exists():
+            mount.rmdir()
     # Plugins are loaded by libobs rather than the executable. Each Mach-O image
     # needs its own relocatable runpath to the staged framework directory.
     magics = {bytes.fromhex(value) for value in ['feedface', 'feedfacf', 'cefaedfe', 'cffaedfe', 'cafebabe', 'bebafeca', 'cafebabf', 'bfbafeca']}
