@@ -64,11 +64,31 @@ fn query(command: NativeCommand) -> Result<Value, String> {
     }
 }
 
-pub fn status() -> Result<Value, String> {
+/// A recorder left running by an earlier Encore build rejects the permission
+/// commands while deserializing them ("unknown variant").
+fn outdated(error: &str) -> bool {
+    error.contains("unknown variant")
+}
+
+/// Query the recorder, replacing a recorder from an earlier build with the one
+/// bundled in this app. Without this the library would keep talking to the old
+/// process, which cannot report or request permissions.
+fn query_current(resources: Option<&Path>, command: NativeCommand) -> Result<Value, String> {
+    match query(command.clone()) {
+        Err(error) if outdated(&error) => {
+            crate::stop_recorder_blocking();
+            crate::launch_recorder_blocking(resources)?;
+            query(command)
+        }
+        result => result,
+    }
+}
+
+pub fn status(resources: Option<&Path>) -> Result<Value, String> {
     if !recorder_online() {
         return Ok(json!({ "running": false }));
     }
-    query(NativeCommand::GetPermissions)
+    query_current(resources, NativeCommand::GetPermissions)
 }
 
 fn ensure_recorder(resources: Option<&Path>) -> Result<(), String> {
@@ -78,12 +98,23 @@ fn ensure_recorder(resources: Option<&Path>) -> Result<(), String> {
     crate::launch_recorder_blocking(resources)
 }
 
+/// Grant a permission with one action. macOS adds an app to a Privacy list only
+/// after the app asks, so the recorder always asks first. The microphone prompt
+/// grants access directly; Screen Recording and Input Monitoring (and any
+/// permission that was already refused) are switched on in System Settings, so
+/// the matching pane opens as well.
 pub fn request(resources: Option<&Path>, kind: &str) -> Result<Value, String> {
     if !KINDS.contains(&kind) {
         return Err(format!("Unknown permission: {kind}"));
     }
     ensure_recorder(resources)?;
-    query(NativeCommand::RequestPermission(kind.into()))
+    let before = query_current(resources, NativeCommand::GetPermissions)?;
+    let undecided = before[kind].as_str() == Some("not_determined");
+    let after = query_current(resources, NativeCommand::RequestPermission(kind.into()))?;
+    if after[kind].as_str() != Some("granted") && !(kind == "microphone" && undecided) {
+        open_settings(kind)?;
+    }
+    Ok(after)
 }
 
 pub fn open_settings(kind: &str) -> Result<(), String> {
@@ -119,5 +150,5 @@ pub fn reset(resources: Option<&Path>) -> Result<Value, String> {
         return Err(format!("Could not reset permissions. {}", failures.join("; ")));
     }
     crate::launch_recorder_blocking(resources)?;
-    status()
+    status(resources)
 }

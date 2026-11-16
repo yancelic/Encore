@@ -70,6 +70,8 @@
   --waveform-line: #5d737e38;
   --danger-text: #a60011;
   --danger-soft: #c2011414;
+  --success: #2f8f5b;
+  --success-text: #1f6e44;
   --range-track: #b6c2cb;
   --range-thumb: #536670;
   --scrollbar: #aebac2;
@@ -107,6 +109,8 @@
   --waveform-line: #bfd5e230;
   --danger-text: #ff929c;
   --danger-soft: #c201142e;
+  --success: #3aa86c;
+  --success-text: #7fd8a6;
   --range-track: #495564;
   --range-thumb: #ecebf3;
   --scrollbar: #667383;
@@ -2030,12 +2034,12 @@ kbd {
   color: var(--ink-engraved);
   background: var(--surface-muted);
 }
-.permission-state.granted { color: var(--paper); background: var(--blue-slate); }
-.permission-state.denied,
-.permission-state.restricted { color: var(--danger-text); background: var(--danger-soft); }
-.permission-badge { font-size: 10px; font-weight: 700; color: var(--ink-engraved); white-space: nowrap; }
-.permission-badge.denied,
-.permission-badge.restricted { color: var(--danger-text); }
+.permission-state.granted { color: #fff; background: var(--success); }
+.permission-state.missing { color: #fff; background: var(--danger); }
+.permission-badge { font-size: 10px; font-weight: 700; white-space: nowrap; }
+.permission-badge.granted { color: var(--success-text); }
+.permission-badge.missing { color: var(--danger-text); }
+.permission-allow { flex: none; }
 .permission-notice {
   display: flex;
   align-items: center;

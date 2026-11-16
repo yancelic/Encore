@@ -604,11 +604,14 @@ mod macos_permissions;
 /// macOS privacy permissions are owned by the recorder bundle, so every query and
 /// request goes through the running recorder rather than the library process.
 #[tauri::command]
-async fn get_macos_permissions() -> Result<serde_json::Value, String> {
+async fn get_macos_permissions(app: AppHandle) -> Result<serde_json::Value, String> {
     #[cfg(target_os = "macos")]
-    return run_blocking(macos_permissions::status).await;
+    {
+        let res_dir = app.path().resource_dir().ok();
+        return run_blocking(move || macos_permissions::status(res_dir.as_deref())).await;
+    }
     #[cfg(not(target_os = "macos"))]
-    Err("Permissions are managed by the operating system on this platform".into())
+    { let _ = app; Err("Permissions are managed by the operating system on this platform".into()) }
 }
 
 #[tauri::command]

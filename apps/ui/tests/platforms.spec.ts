@@ -88,24 +88,25 @@ test('macOS settings manage every recorder permission in one place', async ({ pa
   await expect(section).toContainText('ad-hoc signature');
 
   const microphone = section.getByRole('listitem').filter({ hasText: 'Microphone' });
-  await microphone.getByRole('button', { name: 'Allow…', exact: true }).click();
+  await expect(microphone).toContainText('Not allowed');
+  await microphone.getByRole('button', { name: 'Allow Microphone', exact: true }).click();
   await expect(microphone).toContainText('Allowed');
+  await expect(microphone.getByRole('button')).toHaveCount(0);
   expect((await calls(page, 'request_macos_permission'))[0].args.kind).toBe('microphone');
 
-  // A decision already made can only be changed in System Settings.
   const input = section.getByRole('listitem').filter({ hasText: 'Input Monitoring' });
-  await input.getByRole('button', { name: 'Open Settings', exact: true }).click();
-  expect((await calls(page, 'open_macos_privacy_settings'))[0].args.kind).toBe('input_monitoring');
+  await input.getByRole('button', { name: 'Allow Input Monitoring', exact: true }).click();
+  expect((await calls(page, 'request_macos_permission'))[1].args.kind).toBe('input_monitoring');
 
   const screen = section.getByRole('listitem').filter({ hasText: 'Screen & System Audio Recording' });
-  await screen.getByRole('button', { name: 'Allow…', exact: true }).click();
+  await screen.getByRole('button', { name: 'Allow Screen & System Audio Recording', exact: true }).click();
   await section.getByRole('button', { name: 'Restart recorder', exact: true }).click();
   await expect(screen).toContainText('Allowed');
 
   await section.getByRole('button', { name: 'Reset permissions', exact: true }).click();
   await section.getByRole('button', { name: 'Reset now', exact: true }).click();
   await expect.poll(() => calls(page, 'reset_macos_permissions')).toHaveLength(1);
-  await expect(microphone).toContainText('Not asked yet');
+  await expect(microphone).toContainText('Not allowed');
   expect(errors).toEqual([]);
 });
 

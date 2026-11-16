@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Check, CircleAlert, CircleDashed, RotateCcw } from 'lucide-react';
+import { Check, RotateCcw, X } from 'lucide-react';
 import {
   getMacosPermissions,
-  openMacosPrivacySettings,
   requestMacosPermission,
   resetMacosPermissions,
   restartRecorder,
@@ -20,7 +19,7 @@ const STATE_LABEL: Record<PermissionState, string> = {
   granted: 'Allowed',
   denied: 'Not allowed',
   restricted: 'Blocked by policy',
-  not_determined: 'Not asked yet',
+  not_determined: 'Not allowed',
 };
 
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error));
@@ -71,11 +70,11 @@ export function PermissionSettings() {
     }
   };
 
-  const allow = (kind: PermissionKind, state: PermissionState | undefined) => run(kind, async () => {
+  // The recorder asks macOS first (that adds Encore Recorder to the list), then
+  // opens the matching System Settings pane wherever the switch has to be turned on.
+  const allow = (kind: PermissionKind) => run(kind, () => {
     if (kind === 'screen') setScreenAsked(true);
-    // macOS shows its prompt only once. After a decision, the switch lives in System Settings.
-    if (state === 'not_determined') return requestMacosPermission(kind);
-    await openMacosPrivacySettings(kind);
+    return requestMacosPermission(kind);
   });
 
   if (!permissions) {
@@ -112,19 +111,22 @@ export function PermissionSettings() {
         <ul className="permission-list">
           {ITEMS.map(({ kind, label, detail }) => {
             const state = permissions[kind] ?? 'not_determined';
-            const Icon = state === 'granted' ? Check : state === 'not_determined' ? CircleDashed : CircleAlert;
+            const granted = state === 'granted';
+            const Icon = granted ? Check : X;
             return (
               <li className="permission-row" key={kind}>
-                <span className={`permission-state ${state}`} aria-hidden="true"><Icon size={14} /></span>
+                <span className={`permission-state ${granted ? 'granted' : 'missing'}`} aria-hidden="true">
+                  <Icon size={14} strokeWidth={3} />
+                </span>
                 <div className="permission-text">
                   <span className="permission-label">{label}</span>
                   <span className="capture-mode-help">{detail}</span>
                 </div>
-                <span className={`permission-badge ${state}`}>{STATE_LABEL[state]}</span>
-                {state !== 'granted' && (
-                  <button type="button" className="btn-secondary" disabled={!!working || state === 'restricted'}
-                    onClick={() => void allow(kind, state)}>
-                    {working === kind ? 'Waiting…' : state === 'not_determined' ? 'Allow…' : 'Open Settings'}
+                <span className={`permission-badge ${granted ? 'granted' : 'missing'}`}>{STATE_LABEL[state]}</span>
+                {!granted && (
+                  <button type="button" className="btn-primary permission-allow" disabled={!!working || state === 'restricted'}
+                    aria-label={`Allow ${label}`} onClick={() => void allow(kind)}>
+                    {working === kind ? 'Opening…' : 'Allow'}
                   </button>
                 )}
               </li>
