@@ -4,6 +4,13 @@
   "build-commands": ["true"],
   "modules": [
     {
+      "name": "extra-cmake-modules",
+      "buildsystem": "cmake-ninja",
+      "config-opts": ["-DBUILD_TESTING=OFF", "-DBUILD_DOC=OFF"],
+      "sources": [{"type": "git", "url": "https://github.com/KDE/extra-cmake-modules.git", "commit": "d8d80bcc61341239519392eef1360c796bf25931"}],
+      "cleanup": ["*"]
+    },
+    {
       "name": "simde",
       "buildsystem": "meson",
       "config-opts": ["-Dtests=false"],

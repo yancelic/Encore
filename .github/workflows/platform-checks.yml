@@ -13,6 +13,10 @@ on:
         description: Build macOS ARM64, Ubuntu and Flatpak development artifacts
         type: boolean
         default: false
+      linux_artifact_run_id:
+        description: Test only Flatpak using a verified Ubuntu artifact from this run (Rust/UI sources must match)
+        type: string
+        default: ''
 
 permissions:
   contents: read
@@ -27,16 +31,34 @@ env:
 jobs:
   flatpak:
     name: Flatpak native runtime
-    if: github.ref_type != 'tag'
+    if: ${{ !cancelled() && github.ref_type != 'tag' && (needs.obs-linux.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')) }}
     needs: obs-linux
     runs-on: ubuntu-24.04
     timeout-minutes: 90
+    permissions:
+      contents: read
+      actions: read
     steps:
       - uses: actions/checkout@v4
+      - name: Verify reused Ubuntu executables match the current source
+        if: github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACT_RUN_ID: ${{ inputs.linux_artifact_run_id }}
+        run: |
+          [[ "$ARTIFACT_RUN_ID" =~ ^[0-9]+$ ]]
+          package_sha=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID" --jq .head_sha)
+          git fetch --no-tags origin "$package_sha"
+          git diff --exit-code "$package_sha" HEAD -- Cargo.toml Cargo.lock crates apps
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$ARTIFACT_RUN_ID/jobs?per_page=100" \
+            --jq '.jobs[] | select(.name == "Linux OBS bridge" and .conclusion == "success") | .id' \
+            | grep -E '^[0-9]+$'
       - uses: actions/download-artifact@v4
         with:
           name: encore-obs-bridge-linux-dev
           path: target/debian-artifact
+          run-id: ${{ inputs.linux_artifact_run_id || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Prepare native executables from the verified Ubuntu package
         run: |
           sudo apt-get update
@@ -75,7 +97,7 @@ jobs:
 
   obs-macos:
     name: Apple Silicon OBS bridge
-    if: github.ref_type != 'tag'
+    if: github.ref_type != 'tag' && !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -124,6 +146,7 @@ jobs:
 
   obs-linux:
     name: Linux OBS bridge
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
@@ -174,6 +197,7 @@ jobs:
           retention-days: 14
 
   native:
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '') }}
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
