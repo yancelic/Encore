@@ -63,7 +63,8 @@ export async function mockDesktop(
   page: Page,
   options: { platform?: 'windows' | 'macos' | 'linux'; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
-    shareError?: boolean; shareDelay?: number; permissions?: Record<string, unknown> } = {},
+    shareError?: boolean; shareDelay?: number; permissions?: Record<string, unknown>;
+    audioTracks?: string[] } = {},
 ) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -217,7 +218,7 @@ export async function mockDesktop(
                 ),
               );
             case 'get_clip_audio_tracks':
-              return [];
+              return options.audioTracks ?? [];
             case 'trim_clip_cmd':
             case 'export_vertical_cmd':
             case 'build_montage_cmd': {

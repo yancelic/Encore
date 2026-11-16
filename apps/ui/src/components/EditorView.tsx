@@ -176,6 +176,10 @@ export function EditorView({
 }: EditorViewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const audioRefs = useRef<(HTMLAudioElement | null)[]>([null, null, null]);
+  const pendingPlays = useRef(new WeakSet<HTMLMediaElement>());
+  const startedAudio = useRef(new WeakSet<HTMLMediaElement>());
+  const lastAudioSeek = useRef(new WeakMap<HTMLMediaElement, number>());
+  const videoBuffering = useRef(false);
   const videoLaneRef = useRef<HTMLDivElement | null>(null);
 
   const initialDur = Math.max(0.2, clip.duration_ms / 1000);
@@ -190,6 +194,8 @@ export function EditorView({
   const [trackVolumes, setTrackVolumes] = useState<number[]>([1, 1, 1]);
   const [waveforms, setWaveforms] = useState<number[][]>([]);
   const [trackAudioUrls, setTrackAudioUrls] = useState<string[]>([]);
+  const [audioLoading, setAudioLoading] = useState(clip.audio_tracks > 1);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const [canvasMode, setCanvasMode] = useState<'original' | '9:16' | 'custom'>('original');
   const [crop, setCrop] = useState<CropRect>(DEFAULT_CROP);
@@ -222,6 +228,11 @@ export function EditorView({
     setCanvasMode('original');
     setWaveforms([]);
     setTrackAudioUrls([]);
+    setAudioLoading(clip.audio_tracks > 1);
+    setPlaybackError(null);
+    startedAudio.current = new WeakSet();
+    lastAudioSeek.current = new WeakMap();
+    videoBuffering.current = false;
 
     let cancelled = false;
     getClipWaveforms(clip.id)
@@ -233,7 +244,12 @@ export function EditorView({
       .then((paths) => {
         if (!cancelled) setTrackAudioUrls(paths.map(mediaUrl));
       })
-      .catch(() => {});
+      .catch(() => {
+        if (!cancelled) setPlaybackError('Some audio tracks could not be loaded. Reopen the clip to try again.');
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false);
+      });
 
     return () => {
       cancelled = true;
@@ -241,6 +257,30 @@ export function EditorView({
   }, [clip.id]);
 
   const multiTrackAudioActive = trackAudioUrls.length >= 2;
+
+  const pauseAudio = useCallback(() => {
+    for (const audio of audioRefs.current) {
+      if (!audio) continue;
+      audio.pause();
+      audio.playbackRate = 1;
+    }
+  }, []);
+
+  const handlePlaybackError = useCallback((error: unknown) => {
+    // Pause/seek can cancel an outstanding play request during normal transport.
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    setPlaybackError('Playback could not start with audio. Press Play to try again.');
+    videoRef.current?.pause();
+    pauseAudio();
+  }, [pauseAudio]);
+
+  const playElement = useCallback((media: HTMLMediaElement) => {
+    if (pendingPlays.current.has(media)) return;
+    pendingPlays.current.add(media);
+    media.play()
+      .catch(handlePlaybackError)
+      .finally(() => pendingPlays.current.delete(media));
+  }, [handlePlaybackError]);
 
   const applyAudioMix = useCallback(() => {
     const v = videoRef.current;
@@ -263,23 +303,33 @@ export function EditorView({
 
   const syncAudioElements = useCallback(
     (forceSeek = false) => {
-      applyAudioMix();
       const v = videoRef.current;
       if (!v || !multiTrackAudioActive) return;
+      const shouldPlay = !v.paused && !v.ended && !v.seeking && !videoBuffering.current;
+      const now = performance.now();
       for (let i = 0; i < trackAudioUrls.length; i++) {
         const a = audioRefs.current[i];
         if (!a) continue;
-        if (forceSeek || Math.abs(a.currentTime - v.currentTime) > 0.08) {
+        const drift = v.currentTime - a.currentTime;
+        // Do not repeatedly cancel a pending decode/seek on every animation
+        // frame. Small clock differences are corrected without seeking.
+        if (a.readyState >= 1 && !a.seeking && !pendingPlays.current.has(a)
+          && ((forceSeek && Math.abs(drift) > 0.01)
+            || (shouldPlay && a.readyState >= 3 && Math.abs(drift) > 0.35
+              && now - (lastAudioSeek.current.get(a) ?? -Infinity) >= 1000))) {
           a.currentTime = v.currentTime;
+          lastAudioSeek.current.set(a, now);
         }
-        if (!v.paused && a.paused) {
-          a.play().catch(() => {});
-        } else if (v.paused && !a.paused) {
+        a.playbackRate = v.playbackRate * (Math.abs(drift) > 0.05 && Math.abs(drift) <= 0.35
+          ? (drift > 0 ? 1.03 : 0.97) : 1);
+        if (shouldPlay && a.paused && !a.ended && startedAudio.current.has(a)) {
+          playElement(a);
+        } else if (!shouldPlay && !a.paused) {
           a.pause();
         }
       }
     },
-    [applyAudioMix, multiTrackAudioActive, trackAudioUrls.length],
+    [multiTrackAudioActive, playElement, trackAudioUrls.length],
   );
 
   useEffect(() => {
@@ -289,6 +339,16 @@ export function EditorView({
   useEffect(() => {
     syncAudioElements(true);
   }, [multiTrackAudioActive, trackAudioUrls, syncAudioElements]);
+
+  useEffect(() => {
+    const audio = audioRefs.current.filter((element) => element !== null);
+    return () => { for (const element of audio) element.pause(); };
+  }, [trackAudioUrls]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    return () => video?.pause();
+  }, [clip.id]);
 
   useEffect(() => {
     if (!playing) return;
@@ -319,16 +379,30 @@ export function EditorView({
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v || audioLoading) return;
     if (v.paused) {
+      setPlaybackError(null);
+      videoBuffering.current = false;
       if (v.currentTime >= duration - 0.05) {
         seekTo(trimStart);
       }
-      v.play().catch(() => {});
+      applyAudioMix();
+      syncAudioElements(true);
+      // WebKit grants audio playback per element. Start every track directly
+      // in the click/keyboard handler, before any event or promise boundary.
+      playElement(v);
+      if (multiTrackAudioActive) {
+        for (const audio of audioRefs.current) {
+          if (!audio) continue;
+          startedAudio.current.add(audio);
+          playElement(audio);
+        }
+      }
     } else {
       v.pause();
+      pauseAudio();
     }
-  }, [duration, seekTo, trimStart]);
+  }, [applyAudioMix, audioLoading, duration, multiTrackAudioActive, pauseAudio, playElement, seekTo, syncAudioElements, trimStart]);
 
   // Editor keyboard shortcuts
   useEffect(() => {
@@ -549,6 +623,8 @@ export function EditorView({
         </div>
       </div>
 
+      {playbackError && <p className="playback-error" role="alert">{playbackError}</p>}
+
       <div className="editor-stage-split">
         <section className="video-stage">
           <div className="monitor-chassis">
@@ -557,6 +633,7 @@ export function EditorView({
                 ref={videoRef}
                 src={mediaUrl(clip.path)}
                 preload="auto"
+                playsInline
                 onClick={togglePlay}
                 onLoadedMetadata={(e) => {
                   const vd = e.currentTarget.duration;
@@ -568,17 +645,32 @@ export function EditorView({
                 }}
                 onPlay={() => {
                   setPlaying(true);
+                }}
+                onPlaying={() => {
+                  videoBuffering.current = false;
                   syncAudioElements(false);
+                }}
+                onWaiting={() => {
+                  videoBuffering.current = true;
+                  pauseAudio();
+                }}
+                onSeeking={() => {
+                  videoBuffering.current = true;
+                  pauseAudio();
                 }}
                 onPause={() => {
                   setPlaying(false);
-                  syncAudioElements(false);
+                  pauseAudio();
                 }}
                 onEnded={() => {
                   setPlaying(false);
-                  syncAudioElements(false);
+                  pauseAudio();
                 }}
-                onSeeked={() => syncAudioElements(true)}
+                onSeeked={() => {
+                  videoBuffering.current = false;
+                  syncAudioElements(true);
+                }}
+                onError={() => handlePlaybackError(videoRef.current?.error)}
               />
 
               {trackAudioUrls.map((url, idx) => (
@@ -590,6 +682,7 @@ export function EditorView({
                   src={url}
                   preload="auto"
                   onLoadedMetadata={() => syncAudioElements(true)}
+                  onError={() => handlePlaybackError(audioRefs.current[idx]?.error)}
                 />
               ))}
 
@@ -775,6 +868,7 @@ export function EditorView({
                 className="play-btn"
                 onClick={togglePlay}
                 title="Play / Pause (Space)"
+                disabled={audioLoading}
               >
                 {playing ? (
                   <Pause size={15} fill="currentColor" />

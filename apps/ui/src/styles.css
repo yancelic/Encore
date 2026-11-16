@@ -1731,6 +1731,14 @@ kbd {
   border-radius: 3px;
   object-fit: cover;
 }
+.playback-error {
+  margin: 0;
+  padding: 10px 20px;
+  color: var(--danger-text);
+  background: var(--danger-soft);
+  font-size: 12px;
+}
+
 .toast-stack {
   position: fixed;
   bottom: 22px;
