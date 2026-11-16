@@ -29,6 +29,31 @@ fn run_ffmpeg(ffmpeg: &Path, args: &[&OsStr]) -> Result<(), String> {
     }
 }
 
+fn h264_encoder_args(encoder: &str) -> Vec<String> {
+    let mut args = vec!["-c:v".into(), encoder.into()];
+    let quality = match encoder {
+        "h264_videotoolbox" => vec!["-b:v", "16M"],
+        "h264_nvenc" => vec!["-preset", "p4", "-cq", "20"],
+        _ => vec!["-preset", "veryfast", "-crf", "20"],
+    };
+    args.extend(quality.into_iter().map(str::to_string));
+    args
+}
+
+/// Use the platform's hardware encoder, then fall back if it is unavailable.
+/// Apple exports must never depend on NVIDIA or receive NVENC/x264 options.
+fn run_h264_export(ffmpeg: &Path, build_args: impl Fn(&str) -> Vec<String>) -> Result<(), String> {
+    let hardware = if cfg!(target_os = "macos") { "h264_videotoolbox" } else { "h264_nvenc" };
+    let args = build_args(hardware);
+    let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    if run_ffmpeg(ffmpeg, &refs).is_err() {
+        let args = build_args("libx264");
+        let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        run_ffmpeg(ffmpeg, &refs)?;
+    }
+    Ok(())
+}
+
 /// Resolve the effective linear gain for track `idx`, returning `0.0` when muted.
 fn effective_track_volume(muted_tracks: &[bool], track_volumes: &[f64], idx: usize) -> f64 {
     if *muted_tracks.get(idx).unwrap_or(&false) {
@@ -101,25 +126,14 @@ pub fn export_share_clip(
         }
         // Decoding/re-encoding prevents stream copy from keeping frames before
         // the selection when the trim start falls between source keyframes.
-        args.extend(["-c:v".into(), codec.into()]);
-        if codec == "h264_nvenc" {
-            args.extend(["-preset".into(), "p4".into(), "-cq".into(), "20".into()]);
-        } else {
-            args.extend(["-preset".into(), "veryfast".into(), "-crf".into(), "20".into()]);
-        }
+        args.extend(h264_encoder_args(codec));
         args.extend([
             "-pix_fmt".into(), "yuv420p".into(), "-movflags".into(), "+faststart".into(),
             dst.to_string_lossy().into_owned(),
         ]);
         args
     };
-    let nv_args = build_args("h264_nvenc");
-    let nv_refs: Vec<&OsStr> = nv_args.iter().map(OsStr::new).collect();
-    if run_ffmpeg(ffmpeg, &nv_refs).is_err() {
-        let cpu_args = build_args("libx264");
-        let cpu_refs: Vec<&OsStr> = cpu_args.iter().map(OsStr::new).collect();
-        run_ffmpeg(ffmpeg, &cpu_refs)?;
-    }
+    run_h264_export(ffmpeg, build_args)?;
     Ok(dst.to_path_buf())
 }
 
@@ -299,23 +313,12 @@ pub fn export_vertical_9_16(
         } else {
             v.push("-an".into());
         }
-        v.extend(["-c:v".into(), codec.into()]);
-        if codec == "h264_nvenc" {
-            v.extend(["-preset".into(), "p4".into(), "-cq".into(), "20".into()]);
-        } else {
-            v.extend(["-preset".into(), "veryfast".into(), "-crf".into(), "20".into()]);
-        }
+        v.extend(h264_encoder_args(codec));
         v.extend(["-pix_fmt".into(), "yuv420p".into(), "-movflags".into(), "+faststart".into(), dst.to_string_lossy().into_owned()]);
         v
     };
 
-    let nv_args = build_args("h264_nvenc");
-    let nv_refs: Vec<&OsStr> = nv_args.iter().map(OsStr::new).collect();
-    if run_ffmpeg(ffmpeg, &nv_refs).is_err() {
-        let cpu_args = build_args("libx264");
-        let cpu_refs: Vec<&OsStr> = cpu_args.iter().map(OsStr::new).collect();
-        run_ffmpeg(ffmpeg, &cpu_refs)?;
-    }
+    run_h264_export(ffmpeg, build_args)?;
     Ok(dst.to_path_buf())
 }
 
@@ -380,22 +383,23 @@ pub fn build_montage(ffmpeg: &Path, inputs: &[PathBuf], dst: &Path) -> Result<Pa
         "[vout]".into(),
         "-map".into(),
         "[aout]".into(),
-        "-c:v".into(),
-        "libx264".into(),
-        "-preset".into(),
-        "veryfast".into(),
-        "-crf".into(),
-        "20".into(),
-        "-c:a".into(),
-        "aac".into(),
-        "-b:a".into(),
-        "192k".into(),
-        "-movflags".into(),
-        "+faststart".into(),
-        dst.to_string_lossy().into_owned(),
     ]);
-    let refs: Vec<&OsStr> = owned.iter().map(OsStr::new).collect();
-    run_ffmpeg(ffmpeg, &refs)?;
+    let build_args = |encoder: &str| {
+        let mut args = owned.clone();
+        args.extend(h264_encoder_args(encoder));
+        args.extend([
+            "-c:a".into(), "aac".into(), "-b:a".into(), "192k".into(),
+            "-movflags".into(), "+faststart".into(), dst.to_string_lossy().into_owned(),
+        ]);
+        args
+    };
+    if cfg!(target_os = "macos") {
+        run_h264_export(ffmpeg, build_args)?;
+    } else {
+        let args = build_args("libx264");
+        let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        run_ffmpeg(ffmpeg, &refs)?;
+    }
     Ok(dst.to_path_buf())
 }
 

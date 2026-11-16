@@ -32,6 +32,12 @@ The React app reads capabilities from Rust. Builds with the native runtime expos
 
 Common prerequisites: Rust, Node.js, npm, and FFmpeg with H.264/AAC support and the `libx264` encoder. Native packages and GUI playback still need to be built and exercised on their target systems; a cross-target `cargo check` of shared crates is not a complete application test.
 
+macOS recording uses OBS's VideoToolbox H.264 encoder with software fallback.
+Share, vertical/crop exports and montage transcodes prefer FFmpeg's
+`h264_videotoolbox` on macOS, then fall back to `libx264` if unavailable.
+NVENC is NVIDIA's encoder implementation, not the H.264 video format itself;
+macOS does not attempt NVENC or pass NVIDIA-specific encoder settings.
+
 ### Apple Silicon
 
 On an ARM64 Mac with Xcode Command Line Tools:
