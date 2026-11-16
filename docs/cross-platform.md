@@ -1,6 +1,6 @@
 # Cross-platform development
 
-Work on `dev`. `main` is the production branch. Branch preview workflows upload development artifacts. Tags matching `v<version>-beta.<number>` publish a tested Ubuntu `.deb` as a GitHub prerelease with a test guide and checksums; they do not publish to Flathub or update `latest.json`.
+Work on `dev`. `main` is the production branch. Every successful `dev` push publishes macOS, Ubuntu and Flatpak packages to the rolling GitHub `beta` prerelease after all platform checks pass. These are beta previews: macOS has known feature bugs, and Ubuntu/Flatpak have not yet been tested on real user devices. Beta publication does not publish to Flathub or update `latest.json`.
 
 ## Targets and current status
 
@@ -152,14 +152,23 @@ gh workflow run platform-checks.yml --ref dev -f linux_artifact_run_id=RUN_ID
 
 `platform-checks.yml` checks the native workspace and runs shared/media/library tests on Windows, Apple Silicon, and Ubuntu. Pushes to `dev` also build native development packages and verify relocated packages. The Mac OBS job uses macOS 26; baseline library tests also cover macOS 15. `ui-checks.yml` runs on pushes to `dev`.
 
-For an Ubuntu beta, synchronize the workspace, Cargo lockfile, npm manifests and
-Tauri version, then push a tag such as `v0.6.0-beta.1` at that commit. The tag run
-requires shared/native regression checks and the complete Linux OBS job to pass,
-including package relocation and controlled X11 window capture. Only then does
-`publish-linux-beta` attach the `.deb`, Turkish test guide and SHA256 checksums to
-a GitHub prerelease. It verifies the tag matches the package version and keeps
-the release off GitHub's latest stable channel. Flatpak and the Mac OBS package
-are outside this Ubuntu beta publication job.
+`packaging/beta_release.py` plans an increasing `X.Y.Z-beta.<workflow-run-number>`
+package version for each `dev` push, using the numeric core of the source beta
+version. It synchronizes the workspace/npm/Tauri manifests and workspace entries
+in `Cargo.lock` inside the build jobs, without changing third-party versions.
+Pull requests and manual sandbox-only runs do not publish. Explicit numbered
+beta tags must match the source version and publish an immutable prerelease.
+
+After shared/native regression checks, macOS and Ubuntu package verification,
+controlled X11 capture and Flatpak sandbox tests pass, `publish-beta` collects
+the three matching artifacts. It verifies the Ubuntu package version and macOS
+filename, then attaches fixed-name downloads, the Linux test guide, `BUILD.json`
+and SHA256 checksums. The rolling `beta` tag follows the tested source commit;
+its prerelease title and package versions identify the current build. Only this
+rolling beta prerelease may be replaced by later successful builds. The README's
+download URLs therefore stay valid across beta fixes. Dev runs finish before the
+next dev run starts, so an in-progress beta publication is not cancelled by a
+new push. The Windows stable installer and updater are managed separately.
 
 Once recording backends and native acceptance checks pass, attach each platform package to one versioned GitHub Release. Keep development previews away from the existing production `latest.json`. Flatpak updates belong to its repository/package manager.
 

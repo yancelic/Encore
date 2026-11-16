@@ -1,7 +1,9 @@
 # Encore — Ubuntu beta test notu
 
-Hedef: **Ubuntu 24.04+ x64 (amd64)**. Bu deneysel bir geliştirme sürümüdür.
-İndirdiğin beta etiketini ve `.deb` dosya adını hata raporuna ekle.
+Hedef: **Ubuntu 24.04+ x64 (amd64)** veya **Linux x86_64 üzerinde Flatpak**.
+Bu deneysel bir geliştirme sürümüdür; gerçek kullanıcı cihazında henüz test
+edilmemiştir. CI testleri gerçek masaüstü testinin yerini tutmaz. İndirdiğin beta
+sürümünü ve `BUILD.json` dosyasındaki commit bilgisini hata raporuna ekle.
 
 ## Kurulum
 
@@ -14,6 +16,21 @@ sudo apt install ./Encore_*_amd64.deb
 Klasörde yalnızca kuracağın Encore paketi bulunsun. Gerekli bağımlılıkları APT
 kurar; Rust, Node.js veya OBS Studio arayüzünü kurman gerekmez. Menüden Encore'u
 aç veya terminalde `encore-ui` çalıştır.
+
+### Flatpak
+
+Flatpak kurulu değilse dağıtımının paket yöneticisiyle kur. Ubuntu'da
+`sudo apt install flatpak` kullanabilirsin. Ardından:
+
+```sh
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./Encore-Linux-x86_64.flatpak
+flatpak run com.encore.clipper
+```
+
+GNOME çalışma zamanı ilk kurulumda ayrıca indirilebilir. Bu paket Flathub yayını
+değildir. Başlangıçta Videos klasörünü kullan; diğer konumlar için uygulamanın
+klasör seçicisiyle sandbox erişimi ver.
 
 ## İlk test
 
@@ -50,6 +67,12 @@ Test bitince uygulamanın **Quit Encore** komutuyla arka plan kaydını durdur.
 tail -n 200 "${XDG_CONFIG_HOME:-$HOME/.config}/Encore/recorder.log"
 ```
 
+Flatpak'te log konumu:
+
+```sh
+tail -n 200 "$HOME/.var/app/com.encore.clipper/config/Encore/recorder.log"
+```
+
 Sistem bilgisi için:
 
 ```sh
@@ -63,6 +86,9 @@ Uygulama hiç açılmazsa terminal çıktısını dosyaya al:
 ```sh
 encore-ui > encore-ui-terminal.log 2>&1
 ```
+
+Flatpak'te aynı başlangıç kaydı için
+`flatpak run com.encore.clipper > encore-flatpak-terminal.log 2>&1` kullan.
 
 Loglarda yerel dosya yolları ve uygulama adları bulunabilir; göndermeden önce
 gözden geçir. Paketle aynı klasöre checksum ve test notunu da indirirsen dosyaları

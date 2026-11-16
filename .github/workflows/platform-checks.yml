@@ -4,7 +4,7 @@ on:
   push:
     branches: [dev]
     tags: ['v*-beta.*']
-    paths: ['Cargo.toml', 'Cargo.lock', 'crates/**', 'apps/**', 'native/**', 'packaging/**', '.github/workflows/platform-checks.yml']
+    paths: ['Cargo.toml', 'Cargo.lock', 'README.md', 'docs/**', 'crates/**', 'apps/**', 'native/**', 'packaging/**', '.github/workflows/platform-checks.yml']
   pull_request:
     branches: [dev, main]
   workflow_dispatch:
@@ -23,16 +23,31 @@ permissions:
 
 concurrency:
   group: platforms-${{ github.ref }}
-  cancel-in-progress: true
+  # Finish a dev publication before starting another update of the beta channel.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_BUILD_JOBS: 2
 
 jobs:
+  release-version:
+    name: Plan beta package version
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test beta version preparation
+        run: python3 -m unittest discover -s packaging/tests -v
+      - name: Plan package version and publication channel
+        id: version
+        run: python3 packaging/beta_release.py plan >> "$GITHUB_OUTPUT"
+
   flatpak:
     name: Flatpak native runtime
-    if: ${{ !cancelled() && github.ref_type != 'tag' && (needs.obs-linux.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')) }}
-    needs: obs-linux
+    if: ${{ !cancelled() && (needs.obs-linux.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')) }}
+    needs: [release-version, obs-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
     permissions:
@@ -95,7 +110,8 @@ jobs:
 
   obs-macos:
     name: Apple Silicon OBS bridge
-    if: github.ref_type != 'tag' && !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')
+    if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '') }}
+    needs: release-version
     runs-on: macos-26
     timeout-minutes: 60
     env:
@@ -104,6 +120,13 @@ jobs:
       ENCORE_SELF_TEST_ENCODER: obs_x264
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Set beta package version
+        env:
+          ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
+        run: python packaging/beta_release.py apply
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -125,6 +148,7 @@ jobs:
           python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
       - name: Package the native Apple Silicon development app
         run: |
+          rm -rf -- target/release/bundle
           python3 apps/ui/scripts/prepare-macos-ffmpeg.py
           npm --prefix apps/ui ci
           npm --prefix apps/ui run build:preview
@@ -145,10 +169,18 @@ jobs:
   obs-linux:
     name: Linux OBS bridge
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '') }}
+    needs: release-version
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Set beta package version
+        env:
+          ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
+        run: python packaging/beta_release.py apply
       - name: Install native development dependencies
         run: |
           sudo apt-get update
@@ -175,6 +207,7 @@ jobs:
           python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
       - name: Package the native Ubuntu development app
         run: |
+          rm -rf -- target/release/bundle
           npm --prefix apps/ui ci
           npm --prefix apps/ui run build:preview
           python3 native/obs/verify-package.py
@@ -196,6 +229,7 @@ jobs:
 
   native:
     if: ${{ !(github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '') }}
+    needs: release-version
     name: ${{ matrix.name }}
     strategy:
       fail-fast: false
@@ -211,6 +245,13 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Set beta package version
+        env:
+          ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
+        run: python packaging/beta_release.py apply
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -279,10 +320,10 @@ jobs:
           if-no-files-found: error
           retention-days: 14
 
-  publish-linux-beta:
-    name: Publish Ubuntu beta
-    if: github.event_name == 'push' && github.ref_type == 'tag' && contains(github.ref_name, '-beta.')
-    needs: [obs-linux, native]
+  publish-beta:
+    name: Publish macOS and Linux beta
+    if: github.event_name == 'push' && needs.release-version.outputs.tag != ''
+    needs: [release-version, obs-linux, obs-macos, flatpak, native]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -291,37 +332,23 @@ jobs:
       - uses: actions/download-artifact@v4
         with:
           name: encore-obs-bridge-linux-dev
-          path: target/beta-artifact
-      - name: Prepare the tested package and release notes
+          path: target/beta-artifact/ubuntu
+      - uses: actions/download-artifact@v4
+        with:
+          name: encore-obs-bridge-apple-silicon-dev
+          path: target/beta-artifact/macos
+      - uses: actions/download-artifact@v4
+        with:
+          name: encore-flatpak-linux-dev
+          path: target/beta-artifact/flatpak
+      - name: Prepare tested packages, checksums and release notes
         env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          python3 - <<'PY'
-          import json, os, re
-          from pathlib import Path
-          tag = os.environ['RELEASE_TAG']
-          version = json.loads(Path('apps/ui/src-tauri/tauri.conf.json').read_text())['version']
-          assert re.fullmatch(r'v\d+\.\d+\.\d+-beta\.\d+', tag), f'Invalid beta tag: {tag}'
-          assert tag == f'v{version}', f'Tag {tag} does not match package {version}'
-          PY
-          mkdir -p target/beta-release
-          packages=(target/beta-artifact/target/release/bundle/deb/*.deb)
-          test "${#packages[@]}" -eq 1
-          test -f "${packages[0]}"
-          test "$(dpkg-deb -f "${packages[0]}" Architecture)" = amd64
-          cp "${packages[0]}" target/beta-release/
-          cp docs/linux-beta-testing.md target/beta-release/TEST-NOTU.md
-          (cd target/beta-release && sha256sum -- *.deb TEST-NOTU.md > SHA256SUMS.txt)
-          cp docs/releases/linux-beta.md target/beta-release-notes.md
-          printf '\nSource commit: `%s`\n' "$GITHUB_SHA" >> target/beta-release-notes.md
+          ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
+        run: python3 packaging/beta_release.py prepare
       - name: Publish a prerelease with the verified assets
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: |
-          gh release create "$RELEASE_TAG" target/beta-release/* \
-            --verify-tag --draft --prerelease --latest=false \
-            --title "Encore $RELEASE_TAG — Ubuntu Beta" \
-            --notes-file target/beta-release-notes.md
-          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false
+          ENCORE_BETA_TAG: ${{ needs.release-version.outputs.tag }}
+          ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
+        run: python3 packaging/beta_release.py publish
