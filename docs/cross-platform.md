@@ -9,7 +9,7 @@ Work on `dev`. `main` is the production branch. Branch preview workflows upload 
 | Windows x64 | Existing signed NSIS installer | Full recorder, library, editor, and signed updates |
 | Apple Silicon macOS | ARM64 `.app` / `.dmg` | Experimental OBS recorder; real-device device-discovery crash identified and fixed; repeated discovery regression and device retest pending |
 | Ubuntu 24.04 x64 | `.deb` | Experimental OBS recorder, X11/Wayland capture, PipeWire application audio; native acceptance tests in progress |
-| Linux x64 via Flatpak | Development `.flatpak` bundle | Source-built OBS runtime and portal integration; sandbox build/test still pending |
+| Linux x64 via Flatpak | Development `.flatpak` bundle | Source-built OBS runtime; CI build, install and synthetic sandbox replay verified; real-device portal/playback checks pending |
 
 Intel Macs and Linux ARM64 are outside the initial scope. The initial macOS preview targets macOS 15+ to match the ARM64 build environment and bundled Homebrew dependencies; supporting older releases requires separately built and verified dependencies. Preview artifacts must pass real-device checks before being presented as supported releases.
 
@@ -125,6 +125,29 @@ flatpak run com.encore.clipper
 
 This development manifest packages the compiled Rust binaries against GNOME runtime 51 and builds pinned x264, FFmpeg, OBS, application-audio and native-bridge sources inside the SDK. The manifest grants the Videos directory; other locations require the folder chooser/portal or an explicit permission. FFmpeg cannot access files outside the sandbox merely because the host can. A Flathub submission will require vendored Cargo/npm source builds and store metadata; the development binary manifest is not a Flathub submission.
 
+The GNOME SDK build includes pinned KDE Extra CMake Modules for OBS's build-time
+dependency. The bridge uses OBS's installed CMake target for its public headers
+and dependencies; OBS's generated pkg-config file can leak C-only compiler flags
+into C++ builds.
+
+After installing the bundle, CI runs `bash packaging/flatpak/test.sh` under Xvfb.
+It checks that the UI, recorder and native bridge can resolve their dynamic
+libraries in the runtime, then records a synthetic source inside the sandbox and
+verifies moving H.264 frames, geometry, A/V timing and three isolated AAC tones.
+The test needs host `ffmpeg`, `xvfb` and `dbus-x11`. It does not establish real
+Wayland capture, portal permissions, hardware encoder or GUI playback correctness.
+Ubuntu and Flatpak real-device testing remains pending.
+
+For packaging-only iteration, `platform-checks.yml` accepts the optional manual
+input `linux_artifact_run_id`. It reuses `encore-obs-bridge-linux-dev` from a
+successful Linux OBS job in that run, verifies the current Rust/UI source matches
+the artifact commit, and runs only Flatpak. Leave it empty for the full platform
+checks. For example:
+
+```sh
+gh workflow run platform-checks.yml --ref dev -f linux_artifact_run_id=RUN_ID
+```
+
 ## CI and publication
 
 `platform-checks.yml` checks the native workspace and runs shared/media/library tests on Windows, Apple Silicon, and Ubuntu. Pushes to `dev` also build native development packages and verify relocated packages. The Mac OBS job uses macOS 26; baseline library tests also cover macOS 15. `ui-checks.yml` runs on pushes to `dev`.
@@ -143,7 +166,7 @@ Once recording backends and native acceptance checks pass, attach each platform 
 ## Remaining recording work, in order
 
 1. Validate the Mac device-discovery fix on the user's MacBook Pro M1 Pro (the crash report identifies macOS 26.5.2). The report traced a null-source properties request into the OBS ScreenCaptureKit audio plugin. Discovery and name-to-UID routing now use CoreAudio metadata; the package regression repeatedly queries devices in a live engine and queries them from an offline helper. Both app bundles declare capture usage and microphone entitlements; denied screen permission leaves capture idle.
-2. Finish native Linux acceptance checks: actual controlled X11 window capture, GTK file clipboard formats, and the Flatpak sandbox build/replay test.
+2. Continue real-device Linux acceptance checks. Controlled X11 window capture, GTK file clipboard formats and synthetic Flatpak sandbox build/replay have passed CI; Ubuntu/Flatpak desktop testing, Wayland portals and sandbox file-transfer permissions still need verification.
 3. Validate recording on devices: 1080p60, 60-second bounded RAM replay, repeated saves without encoder restart, separate game/chat/microphone routing, audio synchronization, permissions denied/revoked, application restart, minimize/restore, display changes, sleep/wake, and recording while the library is closed. Ubuntu version, GPU and desktop session details are still pending from the user.
 4. Test native playback, mixed exports, Flatpak folder/file-transfer permissions, clean installs/upgrades, and signing before publishing supported packages.
 
