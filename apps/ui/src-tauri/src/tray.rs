@@ -41,9 +41,32 @@ pub fn acquire_single_instance() -> Option<SingleInstanceGuard> {
     None
 }
 
-#[cfg(not(windows))]
-pub fn acquire_single_instance() -> Option<()> {
-    Some(())
+#[cfg(unix)]
+pub struct SingleInstanceGuard(std::sync::Arc<ipc::LocalServer>);
+
+#[cfg(unix)]
+static LOCAL_WAKE: std::sync::OnceLock<std::sync::Arc<ipc::LocalServer>> = std::sync::OnceLock::new();
+
+#[cfg(unix)]
+pub fn acquire_single_instance() -> Option<SingleInstanceGuard> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(2);
+    loop {
+        match ipc::LocalServer::bind(UI_WAKE_PIPE) {
+            Ok(server) => {
+                let server = std::sync::Arc::new(server);
+                let _ = LOCAL_WAKE.set(server.clone());
+                return Some(SingleInstanceGuard(server));
+            }
+            Err(error) => {
+                if ipc::send_ui_command("show").unwrap_or(false) { return None; }
+                if std::time::Instant::now() >= deadline {
+                    eprintln!("Could not acquire Encore library instance: {error}");
+                    return None;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+        }
+    }
 }
 
 pub fn show_main_window(app: &AppHandle) -> bool {
@@ -55,6 +78,25 @@ pub fn show_main_window(app: &AppHandle) -> bool {
     let _ = window.show();
     let _ = window.set_focus();
     true
+}
+
+#[cfg(unix)]
+pub fn start_wake_listener(app: AppHandle) {
+    let Some(server) = LOCAL_WAKE.get().cloned() else { return };
+    std::thread::spawn(move || loop {
+        match server.accept() {
+            Ok(Some(mut stream)) => {
+                let accepted = match ipc::read_message(&mut stream).as_deref().map(str::trim) {
+                    Ok("show") => show_main_window(&app),
+                    Ok("quit") => { close_library(&app); true },
+                    _ => false,
+                };
+                let _ = writeln!(stream, "{}", if accepted { "ok" } else { "closing" });
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(15)),
+            Err(error) => { eprintln!("Library wake listener: {error}"); break; }
+        }
+    });
 }
 
 /// Hide the library while accepted exports drain, then exit the process and release
@@ -110,7 +152,7 @@ pub fn start_wake_listener(app: AppHandle) {
             let connected = unsafe {
                 match ConnectNamedPipe(handle, None) {
                     Ok(()) => true,
-                    Err(e) => e.code().0 as u32 == ERROR_PIPE_CONNECTED.0,
+                    Err(e) => e.code() == ERROR_PIPE_CONNECTED.to_hresult(),
                 }
             };
             if !connected {

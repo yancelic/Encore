@@ -1,21 +1,20 @@
-//! Clip trimming, 9:16 vertical export, montage concatenation, and Windows CF_HDROP clipboard share.
+//! Clip trimming, 9:16 vertical export, montage concatenation, and native clipboard sharing.
 use std::ffi::OsStr;
-use std::os::windows::ffi::OsStrExt;
-use std::os::windows::process::CommandExt;
+use encore_common::platform::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-use windows::Win32::Foundation::{HANDLE, HWND};
-use windows::Win32::System::DataExchange::{CloseClipboard, EmptyClipboard, OpenClipboard, SetClipboardData};
-use windows::Win32::System::Memory::{GlobalAlloc, GlobalLock, GlobalUnlock, GMEM_MOVEABLE};
-use windows::Win32::UI::Shell::DROPFILES;
-
-const CREATE_NO_WINDOW: u32 = 0x0800_0000;
-const CF_HDROP: u32 = 15;
+#[cfg(windows)]
+#[path = "clipboard/windows.rs"]
+mod clipboard;
+#[cfg(not(windows))]
+#[path = "clipboard/portable.rs"]
+mod clipboard;
+pub use clipboard::copy_file_to_clipboard;
 
 fn run_ffmpeg(ffmpeg: &Path, args: &[&OsStr]) -> Result<(), String> {
     let out = Command::new(ffmpeg)
-        .creation_flags(CREATE_NO_WINDOW)
+        .background()
         .args(args)
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
@@ -28,6 +27,31 @@ fn run_ffmpeg(ffmpeg: &Path, args: &[&OsStr]) -> Result<(), String> {
         let tail: Vec<&str> = err.lines().rev().take(6).collect();
         Err(format!("ffmpeg failed ({}): {}", out.status, tail.into_iter().rev().collect::<Vec<_>>().join(" | ")))
     }
+}
+
+fn h264_encoder_args(encoder: &str) -> Vec<String> {
+    let mut args = vec!["-c:v".into(), encoder.into()];
+    let quality = match encoder {
+        "h264_videotoolbox" => vec!["-b:v", "16M"],
+        "h264_nvenc" => vec!["-preset", "p4", "-cq", "20"],
+        _ => vec!["-preset", "veryfast", "-crf", "20"],
+    };
+    args.extend(quality.into_iter().map(str::to_string));
+    args
+}
+
+/// Use the platform's hardware encoder, then fall back if it is unavailable.
+/// Apple exports must never depend on NVIDIA or receive NVENC/x264 options.
+fn run_h264_export(ffmpeg: &Path, build_args: impl Fn(&str) -> Vec<String>) -> Result<(), String> {
+    let hardware = if cfg!(target_os = "macos") { "h264_videotoolbox" } else { "h264_nvenc" };
+    let args = build_args(hardware);
+    let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+    if run_ffmpeg(ffmpeg, &refs).is_err() {
+        let args = build_args("libx264");
+        let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        run_ffmpeg(ffmpeg, &refs)?;
+    }
+    Ok(())
 }
 
 /// Resolve the effective linear gain for track `idx`, returning `0.0` when muted.
@@ -102,25 +126,14 @@ pub fn export_share_clip(
         }
         // Decoding/re-encoding prevents stream copy from keeping frames before
         // the selection when the trim start falls between source keyframes.
-        args.extend(["-c:v".into(), codec.into()]);
-        if codec == "h264_nvenc" {
-            args.extend(["-preset".into(), "p4".into(), "-cq".into(), "20".into()]);
-        } else {
-            args.extend(["-preset".into(), "veryfast".into(), "-crf".into(), "20".into()]);
-        }
+        args.extend(h264_encoder_args(codec));
         args.extend([
             "-pix_fmt".into(), "yuv420p".into(), "-movflags".into(), "+faststart".into(),
             dst.to_string_lossy().into_owned(),
         ]);
         args
     };
-    let nv_args = build_args("h264_nvenc");
-    let nv_refs: Vec<&OsStr> = nv_args.iter().map(OsStr::new).collect();
-    if run_ffmpeg(ffmpeg, &nv_refs).is_err() {
-        let cpu_args = build_args("libx264");
-        let cpu_refs: Vec<&OsStr> = cpu_args.iter().map(OsStr::new).collect();
-        run_ffmpeg(ffmpeg, &cpu_refs)?;
-    }
+    run_h264_export(ffmpeg, build_args)?;
     Ok(dst.to_path_buf())
 }
 
@@ -300,23 +313,12 @@ pub fn export_vertical_9_16(
         } else {
             v.push("-an".into());
         }
-        v.extend(["-c:v".into(), codec.into()]);
-        if codec == "h264_nvenc" {
-            v.extend(["-preset".into(), "p4".into(), "-cq".into(), "20".into()]);
-        } else {
-            v.extend(["-preset".into(), "veryfast".into(), "-crf".into(), "20".into()]);
-        }
+        v.extend(h264_encoder_args(codec));
         v.extend(["-pix_fmt".into(), "yuv420p".into(), "-movflags".into(), "+faststart".into(), dst.to_string_lossy().into_owned()]);
         v
     };
 
-    let nv_args = build_args("h264_nvenc");
-    let nv_refs: Vec<&OsStr> = nv_args.iter().map(OsStr::new).collect();
-    if run_ffmpeg(ffmpeg, &nv_refs).is_err() {
-        let cpu_args = build_args("libx264");
-        let cpu_refs: Vec<&OsStr> = cpu_args.iter().map(OsStr::new).collect();
-        run_ffmpeg(ffmpeg, &cpu_refs)?;
-    }
+    run_h264_export(ffmpeg, build_args)?;
     Ok(dst.to_path_buf())
 }
 
@@ -381,67 +383,24 @@ pub fn build_montage(ffmpeg: &Path, inputs: &[PathBuf], dst: &Path) -> Result<Pa
         "[vout]".into(),
         "-map".into(),
         "[aout]".into(),
-        "-c:v".into(),
-        "libx264".into(),
-        "-preset".into(),
-        "veryfast".into(),
-        "-crf".into(),
-        "20".into(),
-        "-c:a".into(),
-        "aac".into(),
-        "-b:a".into(),
-        "192k".into(),
-        "-movflags".into(),
-        "+faststart".into(),
-        dst.to_string_lossy().into_owned(),
     ]);
-    let refs: Vec<&OsStr> = owned.iter().map(OsStr::new).collect();
-    run_ffmpeg(ffmpeg, &refs)?;
+    let build_args = |encoder: &str| {
+        let mut args = owned.clone();
+        args.extend(h264_encoder_args(encoder));
+        args.extend([
+            "-c:a".into(), "aac".into(), "-b:a".into(), "192k".into(),
+            "-movflags".into(), "+faststart".into(), dst.to_string_lossy().into_owned(),
+        ]);
+        args
+    };
+    if cfg!(target_os = "macos") {
+        run_h264_export(ffmpeg, build_args)?;
+    } else {
+        let args = build_args("libx264");
+        let refs: Vec<&OsStr> = args.iter().map(OsStr::new).collect();
+        run_ffmpeg(ffmpeg, &refs)?;
+    }
     Ok(dst.to_path_buf())
-}
-
-/// Put a clip file on the Windows clipboard (`CF_HDROP`) so Ctrl+V pastes the MP4 directly into Discord/Explorer.
-pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
-    if !path.exists() {
-        return Err(format!("clip does not exist: {}", path.display()));
-    }
-    let abs = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-    // Strip `\\?\` extended-length prefix so Explorer/Discord accept the drop path cleanly.
-    let s = abs.to_string_lossy();
-    let clean = s.strip_prefix(r"\\?\").unwrap_or(&s);
-    let mut wide: Vec<u16> = OsStr::new(clean).encode_wide().collect();
-    wide.push(0); // path null-terminator
-    wide.push(0); // double-null list terminator
-
-    let header_bytes = std::mem::size_of::<DROPFILES>();
-    let total_bytes = header_bytes + wide.len() * 2;
-    unsafe {
-        let hmem = GlobalAlloc(GMEM_MOVEABLE, total_bytes).map_err(|e| format!("GlobalAlloc failed: {e}"))?;
-        let ptr = GlobalLock(hmem) as *mut u8;
-        if ptr.is_null() {
-            return Err("GlobalLock returned null".into());
-        }
-        std::ptr::write_bytes(ptr, 0, total_bytes);
-        let dropfiles = DROPFILES {
-            pFiles: header_bytes as u32,
-            pt: Default::default(),
-            fNC: false.into(),
-            fWide: true.into(),
-        };
-        std::ptr::write(ptr as *mut DROPFILES, dropfiles);
-        std::ptr::copy_nonoverlapping(wide.as_ptr() as *const u8, ptr.add(header_bytes), wide.len() * 2);
-        let _ = GlobalUnlock(hmem);
-
-        OpenClipboard(Some(HWND::default())).map_err(|e| format!("OpenClipboard failed: {e}"))?;
-        let res = (|| -> Result<(), String> {
-            EmptyClipboard().map_err(|e| format!("EmptyClipboard failed: {e}"))?;
-            SetClipboardData(CF_HDROP, Some(HANDLE(hmem.0)))
-                .map_err(|e| format!("SetClipboardData failed: {e}"))?;
-            Ok(())
-        })();
-        let _ = CloseClipboard();
-        res
-    }
 }
 
 #[cfg(test)]
@@ -449,9 +408,9 @@ mod tests {
     use super::*;
 
     fn test_ffmpeg() -> PathBuf {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..").join("..").join("tools").join("ffmpeg.exe");
-        assert!(root.exists(), "missing tools/ffmpeg.exe for editor test");
-        root
+        let ff = encore_common::ffmpeg_path();
+        assert!(Command::new(&ff).arg("-version").output().is_ok(), "FFmpeg is required for media tests");
+        ff
     }
 
     fn make_clip(ff: &Path, out: &Path, w: u32, h: u32, secs: u32) {
@@ -721,7 +680,7 @@ mod tests {
         assert!(montage.exists() && std::fs::metadata(&montage).unwrap().len() > 10000);
 
         // Verify CF_HDROP clipboard copy succeeds in user session (or check clean result).
-        let _ = copy_file_to_clipboard(&src1);
+        // Clipboard integration is verified manually in a native desktop session.
 
         let _ = std::fs::remove_dir_all(&dir);
     }

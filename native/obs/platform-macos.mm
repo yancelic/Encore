@@ -1,0 +1,311 @@
+// SPDX-License-Identifier: GPL-3.0-only
+#include "platform.hpp"
+#import <AppKit/AppKit.h>
+#import <ApplicationServices/ApplicationServices.h>
+#import <AVFoundation/AVFoundation.h>
+#import <CoreAudio/CoreAudio.h>
+#import <IOKit/hidsystem/IOHIDLib.h>
+#import <Security/Security.h>
+#include <unistd.h>
+#include <cstdio>
+
+namespace { std::string tray_action; NSStatusItem *tray = nil; NSMenuItem *tray_status = nil; }
+@interface EncoreTrayDelegate : NSObject
+- (void)activate:(id)sender;
+@end
+@implementation EncoreTrayDelegate
+- (void)activate:(id)sender { tray_action = [[sender representedObject] UTF8String]; }
+@end
+namespace {
+EncoreTrayDelegate *tray_delegate = nil;
+bool screen_requested = false;
+
+const char *microphone_state() {
+    switch ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio]) {
+    case AVAuthorizationStatusAuthorized: return "granted";
+    case AVAuthorizationStatusDenied: return "denied";
+    case AVAuthorizationStatusRestricted: return "restricted";
+    default: return "not_determined";
+    }
+}
+
+const char *input_monitoring_state() {
+    switch (IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)) {
+    case kIOHIDAccessTypeGranted: return "granted";
+    case kIOHIDAccessTypeDenied: return "denied";
+    default: return "not_determined";
+    }
+}
+
+// The screen preflight result is cached for the process lifetime, so a grant made
+// in System Settings is only visible after the recorder restarts.
+const char *screen_state() {
+    if (CGPreflightScreenCaptureAccess()) return "granted";
+    return screen_requested ? "denied" : "not_determined";
+}
+
+// TCC remembers an app by its designated requirement. Ad-hoc signatures pin that
+// requirement to the binary hash, so every rebuild looks like a different app.
+void describe_signature(obs_data_t *result) {
+    bool adhoc = true;
+    NSString *signer = nil;
+    SecCodeRef code = nullptr;
+    if (SecCodeCopySelf(kSecCSDefaultFlags, &code) == errSecSuccess) {
+        SecStaticCodeRef static_code = nullptr;
+        if (SecCodeCopyStaticCode(code, kSecCSDefaultFlags, &static_code) == errSecSuccess) {
+            CFDictionaryRef info = nullptr;
+            if (SecCodeCopySigningInformation(static_code, kSecCSSigningInformation, &info) == errSecSuccess && info) {
+                NSDictionary *details = (__bridge NSDictionary *)info;
+                NSNumber *flags = details[(id)kSecCodeInfoFlags];
+                NSArray *certificates = details[(id)kSecCodeInfoCertificates];
+                adhoc = !certificates.count || (flags && (flags.unsignedIntValue & kSecCodeSignatureAdhoc));
+                if (certificates.count) {
+                    CFStringRef summary = SecCertificateCopySubjectSummary((__bridge SecCertificateRef)certificates[0]);
+                    if (summary) { signer = [[(__bridge NSString *)summary copy] autorelease]; CFRelease(summary); }
+                }
+                CFRelease(info);
+            }
+            CFRelease(static_code);
+        }
+        CFRelease(code);
+    }
+    obs_data_set_bool(result, "adhoc_signature", adhoc);
+    obs_data_set_string(result, "signed_by", signer ? signer.UTF8String : "");
+}
+}
+
+namespace encore {
+bool platform_init(std::string &) {
+    @autoreleasepool {
+        [NSApplication sharedApplication];
+        [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+        [NSApp finishLaunching];
+        NSBundle *bundle = NSBundle.mainBundle;
+        std::fprintf(stderr, "Encore macOS bundle: %s; microphone description: %s; screen description: %s\n",
+            bundle.bundleIdentifier.UTF8String ?: "(unbundled)",
+            [bundle objectForInfoDictionaryKey:@"NSMicrophoneUsageDescription"] ? "present" : "missing",
+            [bundle objectForInfoDictionaryKey:@"NSScreenCaptureUsageDescription"] ? "present" : "missing");
+    }
+    return true;
+}
+
+void platform_pump() {
+    @autoreleasepool {
+        for (unsigned i = 0; i < 32; ++i) {
+            NSEvent *event = [NSApp nextEventMatchingMask:NSEventMaskAny untilDate:[NSDate distantPast]
+                                                 inMode:NSDefaultRunLoopMode dequeue:YES];
+            if (!event) break;
+            [NSApp sendEvent:event];
+        }
+        [[NSRunLoop currentRunLoop] runMode:NSDefaultRunLoopMode beforeDate:[NSDate date]];
+    }
+}
+void platform_shutdown() { platform_set_tray(false, false); [tray_delegate release]; tray_delegate = nil; }
+void platform_set_tray(bool visible, bool recording) {
+    @autoreleasepool {
+        if (!visible) {
+            if (tray) { [[NSStatusBar systemStatusBar] removeStatusItem:tray]; [tray release]; tray = nil; }
+            tray_status = nil;
+            return;
+        }
+        if (!tray) {
+            tray = [[[NSStatusBar systemStatusBar] statusItemWithLength:NSSquareStatusItemLength] retain];
+            tray.button.image = [NSImage imageWithSystemSymbolName:@"record.circle" accessibilityDescription:@"Encore"];
+            if (!tray.button.image) tray.button.title = @"E";
+            if (!tray_delegate) tray_delegate = [[EncoreTrayDelegate alloc] init];
+            NSMenu *menu = [[NSMenu alloc] initWithTitle:@"Encore"];
+            tray_status = [menu addItemWithTitle:@"Encore — waiting for a game" action:nil keyEquivalent:@""];
+            [menu addItem:[NSMenuItem separatorItem]];
+            for (NSArray *entry in @[@[@"Save replay", @"save"], @[@"Open library", @"library"],
+                                    @[@"Open clips folder", @"folder"], @[@"Quit Encore", @"quit"]]) {
+                NSMenuItem *item = [menu addItemWithTitle:entry[0] action:@selector(activate:) keyEquivalent:@""];
+                item.target = tray_delegate; item.representedObject = entry[1];
+            }
+            tray.menu = menu; [menu release];
+        }
+        tray_status.title = recording ? @"Encore — recording" : @"Encore — waiting for a game";
+    }
+}
+std::string platform_tray_action() { auto action = tray_action; tray_action.clear(); return action; }
+bool platform_microphone_ready(std::string &warning) {
+    if (![NSBundle.mainBundle objectForInfoDictionaryKey:@"NSMicrophoneUsageDescription"]) {
+        warning = "Microphone access requires the bundled Encore application. Install Encore in Applications and start its recorder from the library.";
+        return false;
+    }
+    const auto permission = [AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio];
+    if (permission == AVAuthorizationStatusAuthorized) return true;
+    if (permission == AVAuthorizationStatusNotDetermined) {
+        static bool requested = false;
+        if (!requested) {
+            requested = true;
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) {}];
+        }
+        warning = "Allow Encore Recorder to use the microphone in the system permission dialog, or use Settings > Permissions in Encore.";
+    } else warning = "Microphone permission is disabled. Open Settings > Permissions in Encore, or enable Encore Recorder in System Settings > Privacy & Security > Microphone.";
+    return false;
+}
+void platform_configure_hotkey(const std::string &) {
+    static bool requested = false;
+    if (!CGPreflightListenEventAccess() && !requested) { requested = true; CGRequestListenEventAccess(); }
+}
+std::string platform_hotkey_warning() {
+    return CGPreflightListenEventAccess() ? "" : "Allow Encore Recorder in Input Monitoring (Settings > Permissions in Encore) to save replays while another app is focused.";
+}
+void platform_request_background(bool) {}
+obs_data_t *platform_background_status() {
+    auto *result = obs_data_create();
+    obs_data_set_string(result, "error", "Use the macOS login startup setting");
+    return result;
+}
+bool platform_is_wayland() { return false; }
+const char *platform_graphics_module() { return "libobs-opengl.dylib"; }
+const char *platform_video_source() { return "screen_capture"; }
+const char *platform_video_fallback_source() { return nullptr; }
+bool platform_video_ready(std::string &warning) {
+    if (CGPreflightScreenCaptureAccess()) return true;
+    if (!screen_requested) {
+        screen_requested = true;
+        if (CGRequestScreenCaptureAccess()) return true;
+    }
+    warning = "Allow Encore Recorder in Screen & System Audio Recording (Settings > Permissions in Encore), then restart the recorder to apply the permission.";
+    return false;
+}
+
+obs_data_t *platform_permissions() {
+    auto *result = obs_data_create();
+    @autoreleasepool {
+        NSBundle *bundle = NSBundle.mainBundle;
+        NSString *name = [bundle objectForInfoDictionaryKey:@"CFBundleDisplayName"];
+        if (!name) name = @"Encore Recorder";
+        obs_data_set_string(result, "bundle_id", bundle.bundleIdentifier ? bundle.bundleIdentifier.UTF8String : "");
+        obs_data_set_string(result, "app_name", name.UTF8String);
+        obs_data_set_string(result, "screen", screen_state());
+        obs_data_set_string(result, "microphone", microphone_state());
+        obs_data_set_string(result, "input_monitoring", input_monitoring_state());
+        // Started by launchd (LaunchServices or the login agent) the recorder is its own
+        // responsible process. Spawned directly by the library, macOS would attribute
+        // its privacy requests to the library app instead.
+        obs_data_set_bool(result, "independent", getppid() == 1);
+        describe_signature(result);
+    }
+    return result;
+}
+
+void platform_request_permission(const std::string &kind) {
+    if (kind == "screen") {
+        screen_requested = true;
+        CGRequestScreenCaptureAccess();
+    } else if (kind == "microphone") {
+        if ([AVCaptureDevice authorizationStatusForMediaType:AVMediaTypeAudio] == AVAuthorizationStatusNotDetermined)
+            [AVCaptureDevice requestAccessForMediaType:AVMediaTypeAudio completionHandler:^(BOOL) {}];
+    } else if (kind == "input_monitoring") {
+        IOHIDRequestAccess(kIOHIDRequestTypeListenEvent);
+    }
+}
+
+std::vector<Application> platform_applications() {
+    std::vector<Application> result;
+    @autoreleasepool {
+        const pid_t focused = NSWorkspace.sharedWorkspace.frontmostApplication.processIdentifier;
+        CFArrayRef array = CGWindowListCopyWindowInfo(kCGWindowListOptionAll | kCGWindowListExcludeDesktopElements, kCGNullWindowID);
+        if (!array) return result;
+        for (NSDictionary *info in (__bridge NSArray *)array) {
+            if ([info[(id)kCGWindowLayer] intValue] != 0) continue;
+            const pid_t pid = [info[(id)kCGWindowOwnerPID] intValue];
+            if (pid == getpid()) continue;
+            NSRunningApplication *app = [NSRunningApplication runningApplicationWithProcessIdentifier:pid];
+            if (!app || app.activationPolicy != NSApplicationActivationPolicyRegular) continue;
+            NSString *identifier = app.bundleIdentifier ?: app.executableURL.lastPathComponent;
+            if (!identifier || [identifier isEqualToString:@"com.encore.clipper"]) continue;
+            CGRect bounds{};
+            if (!CGRectMakeWithDictionaryRepresentation((__bridge CFDictionaryRef)info[(id)kCGWindowBounds], &bounds)
+                || bounds.size.width < 200 || bounds.size.height < 120) continue;
+            NSString *title = info[(id)kCGWindowName];
+            if (!title.length) title = app.localizedName ?: identifier;
+            const bool visible = [info[(id)kCGWindowIsOnscreen] boolValue];
+            result.push_back({identifier.UTF8String, title.UTF8String,
+                [info[(id)kCGWindowNumber] unsignedLongLongValue], pid == focused, !visible});
+        }
+        CFRelease(array);
+    }
+    return result;
+}
+
+void platform_video_settings(obs_data_t *settings, const Application &application) {
+    obs_data_set_int(settings, "type", 1); // Window stream; never substitutes the monitor.
+    obs_data_set_int(settings, "window", application.window);
+    obs_data_set_string(settings, "application", application.id.c_str());
+    obs_data_set_bool(settings, "show_cursor", true);
+}
+
+std::vector<std::string> platform_audio_applications() {
+    std::vector<std::string> result;
+    @autoreleasepool {
+        for (NSRunningApplication *application in NSWorkspace.sharedWorkspace.runningApplications) {
+            NSString *identifier = application.bundleIdentifier;
+            if (!identifier.length || [identifier hasPrefix:@"com.encore."]
+                || application.activationPolicy == NSApplicationActivationPolicyProhibited) continue;
+            result.emplace_back(identifier.UTF8String);
+        }
+    }
+    return result;
+}
+uint64_t platform_audio_identity(const std::string &identifier) {
+    @autoreleasepool {
+        NSString *bundle = [NSString stringWithUTF8String:identifier.c_str()];
+        NSArray *applications = [NSRunningApplication runningApplicationsWithBundleIdentifier:bundle];
+        for (NSRunningApplication *application in applications) if (!application.terminated) return application.processIdentifier;
+    }
+    return 0;
+}
+
+std::vector<AudioDevice> platform_audio_devices() {
+    // ScreenCaptureKit's audio source has instance-dependent properties; querying
+    // its OBS properties without a live source dereferences a null capture context.
+    // CoreAudio metadata queries enumerate microphones without opening a capture session.
+    std::vector<AudioDevice> result{{"System audio", "default", false, true}};
+    AudioObjectPropertyAddress property{kAudioHardwarePropertyDefaultInputDevice,
+        kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+    AudioDeviceID default_input = kAudioObjectUnknown;
+    UInt32 size = sizeof(default_input);
+    AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, nullptr, &size, &default_input);
+    property.mSelector = kAudioHardwarePropertyDevices;
+    if (AudioObjectGetPropertyDataSize(kAudioObjectSystemObject, &property, 0, nullptr, &size) != noErr
+        || size > 65536) return result;
+    std::vector<AudioDeviceID> devices(size / sizeof(AudioDeviceID));
+    if (AudioObjectGetPropertyData(kAudioObjectSystemObject, &property, 0, nullptr, &size, devices.data()) != noErr) return result;
+    devices.resize(size / sizeof(AudioDeviceID));
+    @autoreleasepool {
+        for (const auto device : devices) {
+            AudioObjectPropertyAddress input{kAudioDevicePropertyStreams,
+                kAudioDevicePropertyScopeInput, kAudioObjectPropertyElementMain};
+            UInt32 streams = 0;
+            if (AudioObjectGetPropertyDataSize(device, &input, 0, nullptr, &streams) != noErr || !streams) continue;
+            CFStringRef name = nullptr, uid = nullptr;
+            AudioObjectPropertyAddress identity{kAudioObjectPropertyName,
+                kAudioObjectPropertyScopeGlobal, kAudioObjectPropertyElementMain};
+            UInt32 length = sizeof(name);
+            AudioObjectGetPropertyData(device, &identity, 0, nullptr, &length, &name);
+            identity.mSelector = kAudioDevicePropertyDeviceUID;
+            length = sizeof(uid);
+            AudioObjectGetPropertyData(device, &identity, 0, nullptr, &length, &uid);
+            const char *name_utf8 = name ? [(__bridge NSString *)name UTF8String] : nullptr;
+            const char *uid_utf8 = uid ? [(__bridge NSString *)uid UTF8String] : nullptr;
+            if (name_utf8 && uid_utf8) result.push_back({name_utf8, uid_utf8, true, device == default_input});
+            if (name) CFRelease(name);
+            if (uid) CFRelease(uid);
+        }
+    }
+    return result;
+}
+
+const char *platform_audio_source(bool microphone, bool) {
+    return microphone ? "coreaudio_input_capture" : "sck_audio_capture";
+}
+
+void platform_audio_settings(obs_data_t *settings, const std::string &selection, bool application) {
+    obs_data_set_string(settings, "device_id", selection.c_str());
+    obs_data_set_int(settings, "type", application ? 1 : 0);
+    if (application) obs_data_set_string(settings, "application", selection.c_str());
+}
+}

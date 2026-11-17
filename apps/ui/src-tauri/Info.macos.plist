@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>NSMicrophoneUsageDescription</key>
+  <string>Encore records your microphone as a separate track in saved game clips.</string>
+  <key>NSScreenCaptureUsageDescription</key>
+  <string>Encore captures the selected game window to keep your replay buffer ready.</string>
+  <key>NSAudioCaptureUsageDescription</key>
+  <string>Encore records game and chat audio in separate tracks for your clips.</string>
+  <key>NSSupportsAutomaticTermination</key><false/>
+  <key>NSSupportsSuddenTermination</key><false/>
+</dict></plist>

@@ -1,0 +1,74 @@
+name: Stable packages
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: stable-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    name: macOS stable Apple Silicon
+    if: ${{ !contains(github.ref_name, '-') }}
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      CARGO_BUILD_JOBS: 2
+      ENCORE_SELF_TEST_ENCODER: obs_x264
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Verify stable tag matches every package manifest
+        run: |
+          python3 - <<'PY'
+          import json, os, re, tomllib
+          from pathlib import Path
+          version = os.environ['GITHUB_REF_NAME'].removeprefix('v')
+          assert re.fullmatch(r'\d+\.\d+\.\d+', version), 'Expected a stable release tag'
+          assert tomllib.loads(Path('Cargo.toml').read_text())['workspace']['package']['version'] == version
+          for name in ['apps/ui/package.json', 'apps/ui/package-lock.json', 'apps/ui/src-tauri/tauri.conf.json']:
+              package = json.loads(Path(name).read_text())
+              assert package['version'] == version, name
+              if 'packages' in package:
+                  assert package['packages']['']['version'] == version
+          PY
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: apps/ui/package-lock.json
+      - name: Prepare native capture runtime and bundled FFmpeg
+        run: |
+          brew install cmake pkg-config ffmpeg
+          python3 native/obs/prepare-macos.py
+          python3 apps/ui/scripts/prepare-macos-ffmpeg.py
+      - name: Verify native encoding and replay
+        run: |
+          export ENCORE_NATIVE_RUNTIME="$PWD/tools/obs-runtime"
+          cargo run --locked -p encore-recorder -- --self-test target/native-self-test
+          ffmpeg -v error -i target/native-self-test/encore-self-test.mp4 -map 0 -f null -
+          python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
+      - name: Build and verify the relocated stable package
+        run: |
+          npm --prefix apps/ui ci
+          npm --prefix apps/ui run build:preview
+          target/release/bundle/macos/Encore.app/Contents/Resources/ffmpeg -version
+          codesign --verify --deep --strict target/release/bundle/macos/Encore.app
+          python3 native/obs/verify-package.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: encore-macos-stable-${{ github.ref_name }}
+          path: target/release/bundle/dmg/*.dmg
+          if-no-files-found: error
+          retention-days: 14

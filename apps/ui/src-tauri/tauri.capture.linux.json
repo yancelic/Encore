@@ -1,0 +1,8 @@
+{
+  "bundle": {
+    "resources": {
+      "../../../tools/obs-runtime/": "obs-runtime/",
+      "../../../target/release/encore-recorder": "encore-recorder"
+    }
+  }
+}

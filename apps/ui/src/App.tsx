@@ -1,3 +1,4 @@
+import { usePlatform } from './platform';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   buildMontage,
@@ -35,6 +36,7 @@ import type {
 } from './types';
 
 export function App() {
+  const platform = usePlatform();
   const theme = useTheme();
   const updater = useUpdater();
   const [status, setStatus] = useState<RecorderStatus | null>(null);
@@ -97,6 +99,7 @@ export function App() {
 
   // Poll recorder IPC status cleanly so UI reflects live capture, saved hotkeys, and state changes.
   useEffect(() => {
+    if (!platform.recording) return;
     let active = true;
     const poll = async () => {
       try {
@@ -126,7 +129,7 @@ export function App() {
       active = false;
       window.clearInterval(timer);
     };
-  }, [pushToast, refreshClips]);
+  }, [pushToast, refreshClips, platform.recording]);
 
   const activeClip = useMemo(
     () => clips.find((c) => c.id === activeClipId) ?? null,
@@ -233,7 +236,7 @@ export function App() {
     setBusyAction('share');
     try {
       await copyClipToClipboard(id, startSecs, endSecs, mutedTracks, trackVolumes);
-      pushToast('success', 'Clip file copied to clipboard — Ctrl+V anywhere!');
+      pushToast('success', 'Clip file copied to clipboard. Paste it into another app to share.');
       return true;
     } catch (e) {
       pushToast('error', String(e));

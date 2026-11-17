@@ -70,6 +70,8 @@
   --waveform-line: #5d737e38;
   --danger-text: #a60011;
   --danger-soft: #c2011414;
+  --success: #2f8f5b;
+  --success-text: #1f6e44;
   --range-track: #b6c2cb;
   --range-thumb: #536670;
   --scrollbar: #aebac2;
@@ -107,6 +109,8 @@
   --waveform-line: #bfd5e230;
   --danger-text: #ff929c;
   --danger-soft: #c201142e;
+  --success: #3aa86c;
+  --success-text: #7fd8a6;
   --range-track: #495564;
   --range-thumb: #ecebf3;
   --scrollbar: #667383;
@@ -1727,6 +1731,14 @@ kbd {
   border-radius: 3px;
   object-fit: cover;
 }
+.playback-error {
+  margin: 0;
+  padding: 10px 20px;
+  color: var(--danger-text);
+  background: var(--danger-soft);
+  font-size: 12px;
+}
+
 .toast-stack {
   position: fixed;
   bottom: 22px;
@@ -2006,3 +2018,47 @@ kbd {
     transition: none !important;
   }
 }
+
+/* macOS permissions */
+.permission-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.permission-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper);
+}
+.permission-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
+.permission-label { font-size: 12px; font-weight: 700; }
+.permission-state {
+  display: inline-grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 50%;
+  color: var(--ink-engraved);
+  background: var(--surface-muted);
+}
+.permission-state.granted { color: #fff; background: var(--success); }
+.permission-state.missing { color: #fff; background: var(--danger); }
+.permission-badge { font-size: 10px; font-weight: 700; white-space: nowrap; }
+.permission-badge.granted { color: var(--success-text); }
+.permission-badge.missing { color: var(--danger-text); }
+.permission-allow { flex: none; }
+.permission-notice {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 11px;
+  background: var(--info-surface);
+}
+.permission-warning code { font-size: 10px; }
+.permission-reset { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.permission-reset-actions { display: flex; gap: 8px; flex: none; }
+.permission-reset .btn-ghost { display: inline-flex; align-items: center; gap: 6px; flex: none; }

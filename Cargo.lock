@@ -787,7 +787,7 @@ checksum = "4ef6b89e5b37196644d8796de5268852ff179b44e96276cf4290264843743bb7"
 
 [[package]]
 name = "encore-clipstore"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "encore-common",
  "rusqlite",
@@ -797,9 +797,11 @@ dependencies = [
 
 [[package]]
 name = "encore-common"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
+ "dirs",
  "global-hotkey",
+ "libc",
  "serde",
  "serde_json",
  "wasapi",
@@ -808,22 +810,25 @@ dependencies = [
 
 [[package]]
 name = "encore-editor"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
+ "encore-common",
  "windows",
 ]
 
 [[package]]
 name = "encore-encode"
-version = "0.5.0"
+version = "0.6.0"
 
 [[package]]
 name = "encore-recorder"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "encore-common",
  "encore-encode",
  "global-hotkey",
+ "libc",
+ "libloading 0.8.9",
  "serde_json",
  "tauri-winres",
  "wasapi",
@@ -834,11 +839,12 @@ dependencies = [
 
 [[package]]
 name = "encore-ui"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "encore-clipstore",
  "encore-common",
  "encore-editor",
+ "gtk",
  "rfd",
  "serde",
  "serde_json",

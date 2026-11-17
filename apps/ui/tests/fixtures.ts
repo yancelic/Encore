@@ -61,9 +61,10 @@ declare global {
 /** The bridge only exists inside the test browser. Nothing is added to app code. */
 export async function mockDesktop(
   page: Page,
-  options: { empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
+  options: { platform?: 'windows' | 'macos' | 'linux'; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
-    shareError?: boolean; shareDelay?: number } = {},
+    shareError?: boolean; shareDelay?: number; permissions?: Record<string, unknown>;
+    audioTracks?: string[] } = {},
 ) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -101,6 +102,11 @@ export async function mockDesktop(
             last_clip: null,
             error: null,
           };
+      let permissions: Record<string, unknown> = {
+        running: true, bundle_id: 'com.encore.recorder', app_name: 'Encore Recorder', screen: 'granted',
+        microphone: 'granted', input_monitoring: 'granted', independent: true, adhoc_signature: false,
+        signed_by: 'Encore Local Development', ...options.permissions,
+      };
       window.__uiCalls = [];
       window.__TAURI_INTERNALS__ = {
         transformCallback: () => 1,
@@ -123,6 +129,11 @@ export async function mockDesktop(
             case 'plugin:window|set_theme':
             case 'plugin:window|set_background_color':
               return;
+            case 'get_platform_capabilities': {
+              const os = options.platform ?? 'windows';
+              const recording = os === 'windows' || !!options.nativeRecording;
+              return { os, recording, application_audio: recording, autostart: recording, updates: os === 'windows', portal_capture: !!options.wayland };
+            }
             case 'get_config':
               return cfg;
             case 'get_recorder_status':
@@ -153,7 +164,8 @@ export async function mockDesktop(
                 { name: 'USB microphone', kind: 'Input', is_default: true },
               ];
             case 'list_audio_applications':
-              return { supported: true, executables: ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
+              return { supported: true, executables: options.audioApplications ?? ['Chat.exe', 'TeamSpeak.exe', 'RocketLeague.exe'] };
+            case 'select_capture_source': return;
             case 'list_capture_applications':
               if (options.captureApplicationsError) throw new Error('Window enumeration failed');
               return options.captureApplications ?? [
@@ -206,7 +218,7 @@ export async function mockDesktop(
                 ),
               );
             case 'get_clip_audio_tracks':
-              return [];
+              return options.audioTracks ?? [];
             case 'trim_clip_cmd':
             case 'export_vertical_cmd':
             case 'build_montage_cmd': {
@@ -236,6 +248,20 @@ export async function mockDesktop(
             case 'copy_clip_to_clipboard':
               if (options.shareDelay) await new Promise(resolve => setTimeout(resolve, options.shareDelay));
               if (options.shareError) throw new Error('Share export failed');
+              return;
+            case 'get_macos_permissions':
+              return permissions;
+            case 'request_macos_permission':
+              // Screen recording only applies after the recorder restarts.
+              permissions = { ...permissions, [args.kind]: args.kind === 'screen' ? 'denied' : 'granted' };
+              return permissions;
+            case 'reset_macos_permissions':
+              permissions = { ...permissions, screen: 'not_determined', microphone: 'not_determined', input_monitoring: 'not_determined' };
+              return permissions;
+            case 'restart_recorder':
+              if (permissions.screen === 'denied') permissions = { ...permissions, screen: 'granted' };
+              return;
+            case 'open_macos_privacy_settings':
               return;
             case 'pick_clips_folder':
               return 'C:\\Videos\\New clips';

@@ -7,6 +7,8 @@ import type {
   ClipQuery,
   ClipRecord,
   Config,
+  MacosPermissions,
+  PermissionKind,
   RecorderStatus,
 } from './types';
 
@@ -39,6 +41,8 @@ export const listCaptureApplications = (): Promise<CaptureApplication[]> =>
 
 export const pickGameExecutable = (): Promise<string | null> =>
   invoke<string | null>('pick_game_executable');
+
+export const selectCaptureSource = (): Promise<void> => invoke<void>('select_capture_source');
 
 export const getConfig = (): Promise<Config> =>
   invoke<Config>('get_config');
@@ -180,3 +184,17 @@ export function formatDateTime(unixSecs: number): string {
     minute: '2-digit',
   });
 }
+
+export const getMacosPermissions = (): Promise<MacosPermissions> =>
+  invoke<MacosPermissions>('get_macos_permissions');
+
+export const requestMacosPermission = (kind: PermissionKind): Promise<MacosPermissions> =>
+  invoke<MacosPermissions>('request_macos_permission', { kind });
+
+export const openMacosPrivacySettings = (kind: PermissionKind): Promise<void> =>
+  invoke<void>('open_macos_privacy_settings', { kind });
+
+export const resetMacosPermissions = (): Promise<MacosPermissions> =>
+  invoke<MacosPermissions>('reset_macos_permissions');
+
+export const restartRecorder = (): Promise<void> => invoke<void>('restart_recorder');

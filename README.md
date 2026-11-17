@@ -1,15 +1,29 @@
 # Encore
 
-Low-overhead Windows game clipping and multi-track replay studio built with Rust and Tauri 2.
+Low-overhead game clipping and multi-track replay studio built with Rust and Tauri 2.
+
+Windows and Apple Silicon macOS are stable releases. Ubuntu 24.04+ x64 and Linux Flatpak are available as beta previews from `dev`. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging, CI and the remaining milestones.
 
 ## Download
 
-- **Windows Installer (x64):** [Download Encore (`Encore_0.5.0_x64-setup.exe`)](https://github.com/yancelic/Encore/releases/latest/download/Encore_0.5.0_x64-setup.exe)
-- **All Releases:** [GitHub Releases](https://github.com/yancelic/Encore/releases)
+| Platform | Status | Download |
+| --- | --- | --- |
+| Windows 10/11 x64 | **Stable — v0.6.0** | [Windows installer](https://github.com/yancelic/Encore/releases/download/v0.6.0/Encore_0.6.0_x64-setup.exe) |
+| macOS 15+ Apple Silicon | **Stable — v0.6.0** | [macOS `.dmg`](https://github.com/yancelic/Encore/releases/download/v0.6.0/Encore_0.6.0_aarch64.dmg) |
+| Ubuntu 24.04+ x64 | **Beta — not yet tested on a real device** | [Ubuntu `.deb`](https://github.com/yancelic/Encore/releases/download/beta/Encore-Ubuntu-amd64.deb) |
+| Linux x86_64 via Flatpak | **Beta — not yet tested on a real device** | [Flatpak bundle](https://github.com/yancelic/Encore/releases/download/beta/Encore-Linux-x86_64.flatpak) |
 
-> **Requirements:** Windows 10/11 (64-bit). The installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service, and `ffmpeg.exe`.
+> **macOS:** Open the DMG and drag Encore into Applications. Quit Encore and its recorder before replacing an older install. In Settings → Permissions, grant the requested permissions to **Encore Recorder**. This package is ad-hoc signed, without Apple Developer ID signing or notarization; macOS may require **Privacy & Security → Open Anyway** after the first launch attempt. Updates use manual installation. See the [0.6.0 release notes](docs/releases/v0.6.0.md) for details.
 
-## Features
+> **Linux beta:** Ubuntu and Flatpak builds have passed automated CI checks, including synthetic recording tests, but have **not yet been tested on real user devices**. Desktop integration, Wayland permissions, GPU drivers, audio routing and playback may need fixes. See the [Linux beta test guide](docs/linux-beta-testing.md) for installation, checks and log locations.
+
+The [Linux beta release](https://github.com/yancelic/Encore/releases/tag/beta) is refreshed after each successful `dev` push. Each build has a new beta package version; `BUILD.json` identifies its source commit and CI run. Checksums are attached to the release. Beta packages use manual installation.
+
+[All releases](https://github.com/yancelic/Encore/releases) · [Stable release notes](https://github.com/yancelic/Encore/releases/tag/v0.6.0)
+
+The Windows installer bundles `encore-ui.exe`, the headless `encore-recorder.exe` service and `ffmpeg.exe`.
+
+## Windows Stable Features
 
 - **Two-process low-overhead architecture:** A pure-Rust background recorder owns the native tray and global save hotkey. Closing the Tauri library exits its UI/WebView2 process while recording continues. Open Encore from the tray to reopen the library; Quit Encore stops both processes. Accepted exports finish before the library exits.
 - **Anti-cheat-conscious capture:** Uses Windows Graphics Capture (WGC), WASAPI loopback/input capture, and Toolhelp process snapshots (`CreateToolhelp32Snapshot`) without DLL injection, in-game overlays, or opening handles to game processes (`OpenProcess`).
@@ -66,7 +80,7 @@ npm --prefix apps/ui run tauri build
 The NSIS installer is written to:
 
 ```text
-target/release/bundle/nsis/Encore_0.5.0_x64-setup.exe
+target/release/bundle/nsis/Encore_0.6.0_x64-setup.exe
 ```
 
 Building creates the local installer; publishing a GitHub release is a separate step.

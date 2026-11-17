@@ -33,6 +33,7 @@ import {
 import type { ClipRecord } from '../types';
 import type { ResolvedTheme } from '../theme';
 import { CropControls, CropOverlay, DEFAULT_CROP, type CropRect } from './CropControls';
+import { TrackMixer } from '../trackMixer';
 
 interface EditorViewProps {
   theme: ResolvedTheme;
@@ -72,6 +73,19 @@ const TRACK_META = [
   { label: 'Chat audio', color: 'var(--chat-track)', icon: Users },
   { label: 'Microphone', color: 'var(--mic-track)', icon: Mic },
 ] as const;
+
+// Peaks are linear sample amplitudes. Drawn linearly, quiet sources such as a
+// microphone picking up background speech (-30 to -40 dBFS, i.e. 0.01-0.03)
+// fall under the minimum bar height and look identical to silence. Map them
+// to a decibel scale instead, as audio editors do: WAVEFORM_FLOOR_DB and below
+// is flat, 0 dBFS is full height.
+const WAVEFORM_FLOOR_DB = -54;
+
+function peakToDisplay(peak: number): number {
+  if (!(peak > 0)) return 0;
+  const db = 20 * Math.log10(Math.min(1, peak));
+  return Math.max(0, Math.min(1, 1 - db / WAVEFORM_FLOOR_DB));
+}
 
 interface WaveformCanvasProps {
   theme: ResolvedTheme;
@@ -149,7 +163,7 @@ function WaveformCanvas({
       const ratio = (i + 0.5) / data.length;
       const inTrim = ratio >= trimStartRatio && ratio <= trimEndRatio;
       const scaled = effectiveMuted ? data[i] : data[i] * volume;
-      const amp = Math.max(0.04, Math.min(1, scaled)) * maxAmp;
+      const amp = Math.max(0.04, peakToDisplay(scaled)) * maxAmp;
       const x = i * step + (step - barW) * 0.5;
 
       ctx.globalAlpha = effectiveMuted ? 0.55 : inTrim ? 0.92 : 0.22;
@@ -175,7 +189,10 @@ export function EditorView({
   onDeleteClip,
 }: EditorViewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRefs = useRef<(HTMLAudioElement | null)[]>([null, null, null]);
+  const mixerRef = useRef<TrackMixer | null>(null);
+  const lastResync = useRef(-Infinity);
+  const videoBuffering = useRef(false);
+  const awaitingPlaying = useRef(false);
   const videoLaneRef = useRef<HTMLDivElement | null>(null);
 
   const initialDur = Math.max(0.2, clip.duration_ms / 1000);
@@ -189,7 +206,9 @@ export function EditorView({
   const [mutedTracks, setMutedTracks] = useState<boolean[]>([false, false, false]);
   const [trackVolumes, setTrackVolumes] = useState<number[]>([1, 1, 1]);
   const [waveforms, setWaveforms] = useState<number[][]>([]);
-  const [trackAudioUrls, setTrackAudioUrls] = useState<string[]>([]);
+  const [mixerTracks, setMixerTracks] = useState<number>(0);
+  const [audioLoading, setAudioLoading] = useState(clip.audio_tracks > 1);
+  const [playbackError, setPlaybackError] = useState<string | null>(null);
 
   const [canvasMode, setCanvasMode] = useState<'original' | '9:16' | 'custom'>('original');
   const [crop, setCrop] = useState<CropRect>(DEFAULT_CROP);
@@ -221,26 +240,61 @@ export function EditorView({
     setCrop(DEFAULT_CROP);
     setCanvasMode('original');
     setWaveforms([]);
-    setTrackAudioUrls([]);
+    setMixerTracks(0);
+    setAudioLoading(clip.audio_tracks > 1);
+    setPlaybackError(null);
+    lastResync.current = -Infinity;
+    videoBuffering.current = false;
+    awaitingPlaying.current = false;
 
     let cancelled = false;
+    const abort = new AbortController();
+    let mixer: TrackMixer | null = null;
     getClipWaveforms(clip.id)
       .then((wf) => {
         if (!cancelled) setWaveforms(wf);
       })
       .catch(() => {});
     getClipAudioTracks(clip.id)
-      .then((paths) => {
-        if (!cancelled) setTrackAudioUrls(paths.map(mediaUrl));
+      .then(async (paths) => {
+        if (cancelled || paths.length < 2) return;
+        mixer = new TrackMixer();
+        await mixer.load(paths.map(mediaUrl), abort.signal);
+        if (cancelled) return;
+        mixerRef.current = mixer;
+        setMixerTracks(mixer.trackCount);
       })
-      .catch(() => {});
+      .catch(() => {
+        if (cancelled) return;
+        mixer?.dispose();
+        mixer = null;
+        setPlaybackError('Separate audio tracks could not be loaded, so the preview plays the first track only. Exports are not affected.');
+      })
+      .finally(() => {
+        if (!cancelled) setAudioLoading(false);
+      });
 
     return () => {
       cancelled = true;
+      abort.abort();
+      mixer?.dispose();
+      if (mixerRef.current === mixer) mixerRef.current = null;
     };
   }, [clip.id]);
 
-  const multiTrackAudioActive = trackAudioUrls.length >= 2;
+  const multiTrackAudioActive = mixerTracks >= 2;
+
+  const stopAudio = useCallback(() => {
+    mixerRef.current?.stop();
+  }, []);
+
+  const handlePlaybackError = useCallback((error: unknown) => {
+    // Pause/seek can cancel an outstanding play request during normal transport.
+    if (error instanceof DOMException && error.name === 'AbortError') return;
+    setPlaybackError('Playback could not start. Press Play to try again.');
+    videoRef.current?.pause();
+    stopAudio();
+  }, [stopAudio]);
 
   const applyAudioMix = useCallback(() => {
     const v = videoRef.current;
@@ -252,43 +306,46 @@ export function EditorView({
       return;
     }
     v.muted = true;
-    for (let i = 0; i < trackAudioUrls.length; i++) {
-      const a = audioRefs.current[i];
-      if (!a) continue;
+    mixerRef.current?.setGains(Array.from({ length: mixerTracks }, (_, i) => {
       const tVol = Math.max(0, Math.min(1, trackVolumes[i] ?? 1));
-      a.muted = Boolean(mutedTracks[i]) || tVol <= 0.001;
-      a.volume = Math.max(0, Math.min(1, volume * tVol));
-    }
-  }, [multiTrackAudioActive, mutedTracks, trackVolumes, trackAudioUrls.length, volume]);
+      return mutedTracks[i] ? 0 : volume * tVol;
+    }));
+  }, [multiTrackAudioActive, mixerTracks, mutedTracks, trackVolumes, volume]);
 
-  const syncAudioElements = useCallback(
-    (forceSeek = false) => {
-      applyAudioMix();
-      const v = videoRef.current;
-      if (!v || !multiTrackAudioActive) return;
-      for (let i = 0; i < trackAudioUrls.length; i++) {
-        const a = audioRefs.current[i];
-        if (!a) continue;
-        if (forceSeek || Math.abs(a.currentTime - v.currentTime) > 0.08) {
-          a.currentTime = v.currentTime;
-        }
-        if (!v.paused && a.paused) {
-          a.play().catch(() => {});
-        } else if (v.paused && !a.paused) {
-          a.pause();
-        }
-      }
-    },
-    [applyAudioMix, multiTrackAudioActive, trackAudioUrls.length],
-  );
+  // The video is the transport master. The mixer starts at the video position
+  // whenever the video is actually advancing and stops whenever it is not.
+  // Drift is corrected by restarting the decoded buffers (instant, no decode)
+  // rather than seeking media elements or changing their playback rate.
+  const followVideo = useCallback(() => {
+    const v = videoRef.current;
+    const mixer = mixerRef.current;
+    if (!v || !mixer || !multiTrackAudioActive) return;
+    const shouldPlay = !v.paused && !v.ended && !v.seeking
+      && !videoBuffering.current && !awaitingPlaying.current;
+    if (!shouldPlay) {
+      if (mixer.playing) mixer.stop();
+      return;
+    }
+    const now = performance.now();
+    if (!mixer.playing
+      || (Math.abs(mixer.position - v.currentTime) > 0.12 && now - lastResync.current >= 500)) {
+      mixer.start(v.currentTime);
+      lastResync.current = now;
+    }
+  }, [multiTrackAudioActive]);
 
   useEffect(() => {
     applyAudioMix();
   }, [applyAudioMix]);
 
   useEffect(() => {
-    syncAudioElements(true);
-  }, [multiTrackAudioActive, trackAudioUrls, syncAudioElements]);
+    followVideo();
+  }, [followVideo]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    return () => video?.pause();
+  }, [clip.id]);
 
   useEffect(() => {
     if (!playing) return;
@@ -297,13 +354,13 @@ export function EditorView({
       const v = videoRef.current;
       if (v) {
         setCurrentTime(v.currentTime);
-        syncAudioElements(false);
+        followVideo();
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, syncAudioElements]);
+  }, [playing, followVideo]);
 
   const seekTo = useCallback(
     (secs: number) => {
@@ -312,23 +369,33 @@ export function EditorView({
       const clamped = Math.max(0, Math.min(duration, secs));
       v.currentTime = clamped;
       setCurrentTime(clamped);
-      syncAudioElements(true);
     },
-    [duration, syncAudioElements],
+    [duration],
   );
 
   const togglePlay = useCallback(() => {
     const v = videoRef.current;
-    if (!v) return;
+    if (!v || audioLoading) return;
     if (v.paused) {
+      setPlaybackError(null);
+      // The video clock does not advance between play() and its 'playing'
+      // event. Hold the mixer until then so it does not start early and then
+      // restart on the first drift check (an audible repeat at Play).
+      videoBuffering.current = false;
+      awaitingPlaying.current = true;
       if (v.currentTime >= duration - 0.05) {
         seekTo(trimStart);
       }
-      v.play().catch(() => {});
+      applyAudioMix();
+      // WebKit only lets an AudioContext make sound once it is resumed inside a
+      // user gesture, so unlock it here before any promise boundary.
+      mixerRef.current?.unlock();
+      v.play().catch(handlePlaybackError);
     } else {
       v.pause();
+      stopAudio();
     }
-  }, [duration, seekTo, trimStart]);
+  }, [applyAudioMix, audioLoading, duration, handlePlaybackError, seekTo, stopAudio, trimStart]);
 
   // Editor keyboard shortcuts
   useEffect(() => {
@@ -468,13 +535,7 @@ export function EditorView({
       v.removeAttribute('src');
       v.load();
     }
-    for (const a of audioRefs.current) {
-      if (a) {
-        a.pause();
-        a.removeAttribute('src');
-        a.load();
-      }
-    }
+    mixerRef.current?.stop();
     await onDeleteClip(clip);
   };
 
@@ -539,7 +600,7 @@ export function EditorView({
           <button
             className="path-link mono"
             onClick={() => onRevealClip(clip.path)}
-            title={`Reveal in Explorer: ${clip.path}`}
+            title={`Show in folder: ${clip.path}`}
           >
             {clip.path}
           </button>
@@ -549,6 +610,8 @@ export function EditorView({
         </div>
       </div>
 
+      {playbackError && <p className="playback-error" role="alert">{playbackError}</p>}
+
       <div className="editor-stage-split">
         <section className="video-stage">
           <div className="monitor-chassis">
@@ -557,6 +620,7 @@ export function EditorView({
                 ref={videoRef}
                 src={mediaUrl(clip.path)}
                 preload="auto"
+                playsInline
                 onClick={togglePlay}
                 onLoadedMetadata={(e) => {
                   const vd = e.currentTarget.duration;
@@ -564,34 +628,37 @@ export function EditorView({
                     setDuration(vd);
                     setTrimEnd((cur) => (cur === initialDur ? vd : Math.min(cur, vd)));
                   }
-                  syncAudioElements(true);
                 }}
                 onPlay={() => {
                   setPlaying(true);
-                  syncAudioElements(false);
+                }}
+                onPlaying={() => {
+                  videoBuffering.current = false;
+                  awaitingPlaying.current = false;
+                  followVideo();
+                }}
+                onWaiting={() => {
+                  videoBuffering.current = true;
+                  stopAudio();
+                }}
+                onSeeking={() => {
+                  videoBuffering.current = true;
+                  stopAudio();
                 }}
                 onPause={() => {
                   setPlaying(false);
-                  syncAudioElements(false);
+                  stopAudio();
                 }}
                 onEnded={() => {
                   setPlaying(false);
-                  syncAudioElements(false);
+                  stopAudio();
                 }}
-                onSeeked={() => syncAudioElements(true)}
+                onSeeked={() => {
+                  videoBuffering.current = false;
+                  followVideo();
+                }}
+                onError={() => handlePlaybackError(videoRef.current?.error)}
               />
-
-              {trackAudioUrls.map((url, idx) => (
-                <audio
-                  key={url}
-                  ref={(el) => {
-                    audioRefs.current[idx] = el;
-                  }}
-                  src={url}
-                  preload="auto"
-                  onLoadedMetadata={() => syncAudioElements(true)}
-                />
-              ))}
 
               {canvasMode === '9:16' && (
                 <div className="vertical-overlay-guide">
@@ -724,7 +791,7 @@ export function EditorView({
             <span className="inspector-label">Clip file</span>
             <button className="btn-secondary" onClick={() => onRevealClip(clip.path)}>
               <FolderOpen size={14} />
-              Show in Explorer
+              Show in folder
             </button>
             {confirmDelete ? (
               <div style={{ display: 'flex', gap: 6 }}>
@@ -775,6 +842,7 @@ export function EditorView({
                 className="play-btn"
                 onClick={togglePlay}
                 title="Play / Pause (Space)"
+                disabled={audioLoading}
               >
                 {playing ? (
                   <Pause size={15} fill="currentColor" />

@@ -2,8 +2,11 @@ import { useRef, useState } from 'react';
 import { Check, FolderOpen, Gamepad2, Plus, RefreshCw } from 'lucide-react';
 import { listCaptureApplications, pickGameExecutable } from '../api';
 import type { CaptureApplication } from '../types';
+import { usePlatform } from '../platform';
 
 export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: string) => void }) {
+  const platform = usePlatform();
+  const windows = platform.os === 'windows';
   const [open, setOpen] = useState(false);
   const [applications, setApplications] = useState<CaptureApplication[]>([]);
   const [loading, setLoading] = useState(false);
@@ -48,7 +51,7 @@ export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: str
       const exe = await pickGameExecutable();
       if (exe) add(exe);
     } catch {
-      setError('Could not select the game. Choose its .exe file and try again.');
+      setError('Could not select the game. Choose its application and try again.');
     } finally {
       setBrowsing(false);
     }
@@ -56,9 +59,9 @@ export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: str
 
   const addManually = () => {
     const name = manual.trim();
-    const exe = name.toLowerCase().endsWith('.exe') ? name : `${name}.exe`;
-    if (!name || exe.length <= 4 || /[\\/:*?"<>|\x00-\x1f]/.test(exe)) {
-      setManualError('Enter an executable filename, such as Game.exe.');
+    const exe = windows && !name.toLowerCase().endsWith('.exe') ? `${name}.exe` : name;
+    if (!name || (windows && exe.length <= 4) || /[\\/\x00-\x1f]/.test(exe) || (windows && /[:*?"<>|]/.test(exe))) {
+      setManualError(windows ? 'Enter an executable filename, such as Game.exe.' : 'Enter the application identifier shown in the running applications list.');
       return;
     }
     setManualError(null);
@@ -70,14 +73,14 @@ export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: str
 
   return (
     <div className="game-picker">
-      <p className="capture-mode-help">Open your game and choose its window, or browse for the game’s .exe file.</p>
+      <p className="capture-mode-help">{windows ? 'Open your game and choose its window, or browse for the game’s .exe file.' : 'Open your game and choose its window, or browse for its application.'}</p>
       <div className="game-picker-actions">
         <button type="button" className="btn-secondary" aria-expanded={open} aria-controls="running-game-picker"
           onClick={() => { setOpen(!open); if (!open) void refresh(); }}>
           <Gamepad2 size={14} /> {open ? 'Hide running applications' : 'Choose running application'}
         </button>
         <button type="button" className="btn-secondary" disabled={browsing} onClick={() => void browse()}>
-          <FolderOpen size={14} /> {browsing ? 'Choosing…' : 'Browse game .exe'}
+          <FolderOpen size={14} /> {browsing ? 'Choosing…' : windows ? 'Browse game .exe' : 'Browse application'}
         </button>
       </div>
       {open && <div id="running-game-picker" className="running-game-picker" aria-label="Running applications">
@@ -90,7 +93,7 @@ export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: str
         </div>
         {loading ? <p className="capture-mode-help" role="status">Loading running applications…</p>
           : !error && filtered.length === 0 ? <p className="capture-mode-help" role="status">
-            {applications.length === 0 ? 'No application windows found. Open your game and refresh, or browse for its .exe file.'
+            {applications.length === 0 ? 'No application windows found. Open your game and refresh, or browse for its application.'
               : 'No matching applications. Try another search or browse for your game.'}
           </p>
           : <ul className="running-games">
@@ -111,7 +114,7 @@ export function GamePicker({ games, onAdd }: { games: string[]; onAdd: (exe: str
       <details className="manual-game-entry">
         <summary>Enter executable name manually</summary>
         <div className="field-row">
-          <input type="text" placeholder="Game.exe" aria-label="Add game executable" value={manual}
+          <input type="text" placeholder={windows ? 'Game.exe' : platform.os === 'macos' ? 'com.example.game' : 'game'} aria-label="Add game executable" value={manual}
             onChange={(event) => setManual(event.target.value)}
             onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); addManually(); } }} />
           <button type="button" className="btn-secondary" onClick={addManually}><Plus size={14} /> Add Game</button>

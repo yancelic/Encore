@@ -1,7 +1,7 @@
 {
   "name": "encore-ui",
   "private": true,
-  "version": "0.5.0",
+  "version": "0.6.0",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,9 @@
     "preview": "vite preview",
     "pretest:ui": "npm run build",
     "test:ui": "playwright test",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "build:preview": "node scripts/build-preview.mjs",
+    "setup:macos-signing": "bash scripts/setup-macos-dev-signing.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.12.4",

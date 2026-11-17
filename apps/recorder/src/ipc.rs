@@ -60,7 +60,7 @@ fn serve_pipe(pipe_name: &str, hwnd_raw: isize, shared: &IpcShared, stop: &Atomi
             let connected = unsafe {
                 match ConnectNamedPipe(handle, None) {
                     Ok(()) => true,
-                    Err(e) => e.code().0 as u32 == ERROR_PIPE_CONNECTED.0,
+                    Err(e) => e.code() == ERROR_PIPE_CONNECTED.to_hresult(),
                 }
             };
             if !connected || stop.load(Ordering::Relaxed) {

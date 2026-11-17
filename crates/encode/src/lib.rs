@@ -123,6 +123,12 @@ impl RingBuffer {
         self.count = 0;
     }
 
+    /// Change retention without replacing the allocation budget shared with pending saves.
+    pub fn set_duration(&mut self, duration: Duration) {
+        self.window = (duration.as_nanos() / 100).min(i64::MAX as u128) as i64;
+        self.clear();
+    }
+
     fn discard_first_gop(&mut self) {
         self.keys.pop_front();
         if let Some(key) = self.keys.front() {
@@ -228,6 +234,22 @@ mod tests {
                 buffer.push(frame(stream, i * 100, i % 10 == 0), vec![1; 10]);
             }
         }
+    }
+
+    #[test]
+    fn retention_changes_keep_pending_saves_charged_to_the_same_budget() {
+        let mut buffer = RingBuffer::new(Duration::from_secs(2), 1000);
+        feed(&mut buffer, 0..20);
+        let pending = buffer.snapshot(Duration::from_secs(1)).unwrap();
+        buffer.set_duration(Duration::from_secs(5));
+        let retained = buffer.live_bytes();
+        assert!(retained > 0, "An accepted save still owns its compressed payloads");
+        feed(&mut buffer, 20..120);
+        assert!(buffer.live_bytes() <= 1000, "Changing retention cannot create a second memory budget");
+        assert_eq!(pending.streams[0][0].data.bytes(), &[1; 10]);
+        let before_release = buffer.live_bytes();
+        drop(pending);
+        assert_eq!(buffer.live_bytes(), before_release - retained);
     }
     #[test]
     fn history_starts_on_a_keyframe_and_preserves_all_tracks() {

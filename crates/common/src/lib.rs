@@ -1,10 +1,22 @@
-//! Shared configuration, IPC types, and Windows autostart helpers for Encore.
+//! Shared configuration, IPC types, and platform services for Encore.
+#[cfg(windows)]
+#[path = "platform/windows/autostart.rs"]
+pub mod autostart;
+#[cfg(not(windows))]
+#[path = "platform/portable/autostart.rs"]
 pub mod autostart;
 pub mod ipc;
+#[cfg(windows)]
+#[path = "platform/windows/processes.rs"]
 pub mod processes;
+#[cfg(not(windows))]
+#[path = "platform/portable/processes.rs"]
+pub mod processes;
+pub mod platform;
 pub mod tray_icon;
 
-use global_hotkey::hotkey::{Code, HotKey};
+use global_hotkey::hotkey::HotKey;
+use global_hotkey::hotkey::Code;
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -26,7 +38,7 @@ pub enum AudioMode {
     Applications,
 }
 
-/// User-selectable settings, stored as JSON in `%APPDATA%\Encore\config.json`.
+/// User-selectable settings, stored as JSON in the platform's configuration directory.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -40,6 +52,8 @@ pub struct Config {
     pub audio_mode: AudioMode,
     /// In application mode, capture the selected game's process tree.
     pub game_audio_enabled: bool,
+    /// Wayland's window portal does not reveal the owning application. Select its audio explicitly.
+    pub game_application: Option<String>,
     /// Executable filename, never a window title or persisted PID. None = chat off.
     pub chat_application: Option<String>,
     /// Track 0 (Game): substring of output device name (`None` = default device, `"off"` = silent).
@@ -58,9 +72,7 @@ pub struct Config {
 
 impl Default for Config {
     fn default() -> Self {
-        let videos = std::env::var_os("USERPROFILE")
-            .map(|p| PathBuf::from(p).join("Videos"))
-            .unwrap_or_else(|| PathBuf::from("."));
+        let videos = platform::videos_dir();
         Self {
             mode: CaptureMode::GameDetection,
             fps: 60,
@@ -69,6 +81,7 @@ impl Default for Config {
             hotkey: "Alt+S".into(),
             audio_mode: AudioMode::Devices,
             game_audio_enabled: true,
+            game_application: None,
             chat_application: None,
             audio_device: None,
             chat_device: None,
@@ -117,17 +130,22 @@ impl Config {
     pub fn validate_audio(&self) -> Result<(), String> {
         if self.audio_mode == AudioMode::Applications {
             if !processes::application_loopback_supported() {
-                return Err("Application audio requires Windows build 20348 or later. Select Devices instead.".into());
+                return Err(if cfg!(windows) { "Application audio requires Windows build 20348 or later. Select Devices instead." }
+                    else { "The native application audio runtime is missing. Reinstall Encore or select Devices." }.into());
             }
             if self.chat_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
                 return Err("Select a chat executable filename such as Chat.exe, not a window title or file path.".into());
+            }
+            #[cfg(unix)]
+            if self.game_application.as_deref().is_some_and(|exe| !processes::valid_executable(exe)) {
+                return Err("Choose the game's audio application identifier, without a file path.".into());
             }
         }
         Ok(())
     }
 
     pub fn dir() -> PathBuf {
-        std::env::var_os("APPDATA").map(PathBuf::from).unwrap_or_else(|| PathBuf::from(".")).join("Encore")
+        platform::config_dir()
     }
 
     pub fn path() -> PathBuf {
@@ -172,22 +190,12 @@ pub fn target_bitrate(out_w: u32, out_h: u32, fps: u32) -> u32 {
     bps.clamp(8_000_000, 80_000_000) as u32
 }
 
-/// Locate bundled or repo `ffmpeg.exe` near the running executable, falling back to `PATH`.
+/// Locate FFmpeg in a bundle, development checkout, or PATH.
 pub fn ffmpeg_path() -> PathBuf {
-    if let Ok(exe) = std::env::current_exe() {
-        for anc in exe.ancestors().skip(1) {
-            for rel in ["ffmpeg.exe", "tools\\ffmpeg.exe", "resources\\ffmpeg.exe", "resources\\tools\\ffmpeg.exe"] {
-                let candidate = anc.join(rel);
-                if candidate.exists() {
-                    return candidate;
-                }
-            }
-        }
-    }
-    PathBuf::from("ffmpeg")
+    platform::ffmpeg_path()
 }
 
-fn is_windows_supported_key(code: Code) -> bool {
+fn is_supported_key(code: Code) -> bool {
     matches!(
         code,
         Code::KeyA
@@ -332,7 +340,7 @@ fn is_windows_supported_key(code: Code) -> bool {
     )
 }
 
-/// Parse and validate a configured global hotkey string for Windows `RegisterHotKey`.
+/// Parse a global hotkey, applying RegisterHotKey restrictions on Windows.
 pub fn parse_hotkey(s: &str) -> Result<HotKey, String> {
     let trimmed = s.trim();
     if trimmed.is_empty() {
@@ -341,7 +349,7 @@ pub fn parse_hotkey(s: &str) -> Result<HotKey, String> {
     let hk = HotKey::from_str(trimmed).map_err(|_| {
         format!("Invalid hotkey '{trimmed}'. Please pick a valid key combination in Settings.")
     })?;
-    if !is_windows_supported_key(hk.key) {
+    if !is_supported_key(hk.key) {
         return Err(format!(
             "Unsupported hotkey key '{}' in '{trimmed}'. Please pick another hotkey in Settings.",
             hk.key

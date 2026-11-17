@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>com.encore.clipper</id>
+  <name>Encore</name>
+  <summary>Browse, edit and export game clips</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>GPL-3.0-only</project_license>
+  <description>
+    <p>Encore provides a clip library and a multi-track editor with trimming, audio mixing, vertical exports and montages.</p>
+    <p>This development preview opens existing MP4 files. Linux recording support is still in development.</p>
+  </description>
+  <launchable type="desktop-id">com.encore.clipper.desktop</launchable>
+  <url type="homepage">https://github.com/yancelic/Encore</url>
+  <url type="bugtracker">https://github.com/yancelic/Encore/issues</url>
+  <provides><binary>encore-ui</binary></provides>
+  <content_rating type="oars-1.1"/>
+</component>
