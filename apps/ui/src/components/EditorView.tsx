@@ -74,6 +74,19 @@ const TRACK_META = [
   { label: 'Microphone', color: 'var(--mic-track)', icon: Mic },
 ] as const;
 
+// Peaks are linear sample amplitudes. Drawn linearly, quiet sources such as a
+// microphone picking up background speech (-30 to -40 dBFS, i.e. 0.01-0.03)
+// fall under the minimum bar height and look identical to silence. Map them
+// to a decibel scale instead, as audio editors do: WAVEFORM_FLOOR_DB and below
+// is flat, 0 dBFS is full height.
+const WAVEFORM_FLOOR_DB = -54;
+
+function peakToDisplay(peak: number): number {
+  if (!(peak > 0)) return 0;
+  const db = 20 * Math.log10(Math.min(1, peak));
+  return Math.max(0, Math.min(1, 1 - db / WAVEFORM_FLOOR_DB));
+}
+
 interface WaveformCanvasProps {
   theme: ResolvedTheme;
   peaks: number[];
@@ -150,7 +163,7 @@ function WaveformCanvas({
       const ratio = (i + 0.5) / data.length;
       const inTrim = ratio >= trimStartRatio && ratio <= trimEndRatio;
       const scaled = effectiveMuted ? data[i] : data[i] * volume;
-      const amp = Math.max(0.04, Math.min(1, scaled)) * maxAmp;
+      const amp = Math.max(0.04, peakToDisplay(scaled)) * maxAmp;
       const x = i * step + (step - barW) * 0.5;
 
       ctx.globalAlpha = effectiveMuted ? 0.55 : inTrim ? 0.92 : 0.22;
