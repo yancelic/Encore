@@ -33,6 +33,7 @@ import {
 import type { ClipRecord } from '../types';
 import type { ResolvedTheme } from '../theme';
 import { CropControls, CropOverlay, DEFAULT_CROP, type CropRect } from './CropControls';
+import { TrackMixer } from '../trackMixer';
 
 interface EditorViewProps {
   theme: ResolvedTheme;
@@ -175,11 +176,10 @@ export function EditorView({
   onDeleteClip,
 }: EditorViewProps) {
   const videoRef = useRef<HTMLVideoElement | null>(null);
-  const audioRefs = useRef<(HTMLAudioElement | null)[]>([null, null, null]);
-  const pendingPlays = useRef(new WeakSet<HTMLMediaElement>());
-  const startedAudio = useRef(new WeakSet<HTMLMediaElement>());
-  const lastAudioSeek = useRef(new WeakMap<HTMLMediaElement, number>());
+  const mixerRef = useRef<TrackMixer | null>(null);
+  const lastResync = useRef(-Infinity);
   const videoBuffering = useRef(false);
+  const awaitingPlaying = useRef(false);
   const videoLaneRef = useRef<HTMLDivElement | null>(null);
 
   const initialDur = Math.max(0.2, clip.duration_ms / 1000);
@@ -193,7 +193,7 @@ export function EditorView({
   const [mutedTracks, setMutedTracks] = useState<boolean[]>([false, false, false]);
   const [trackVolumes, setTrackVolumes] = useState<number[]>([1, 1, 1]);
   const [waveforms, setWaveforms] = useState<number[][]>([]);
-  const [trackAudioUrls, setTrackAudioUrls] = useState<string[]>([]);
+  const [mixerTracks, setMixerTracks] = useState<number>(0);
   const [audioLoading, setAudioLoading] = useState(clip.audio_tracks > 1);
   const [playbackError, setPlaybackError] = useState<string | null>(null);
 
@@ -227,25 +227,35 @@ export function EditorView({
     setCrop(DEFAULT_CROP);
     setCanvasMode('original');
     setWaveforms([]);
-    setTrackAudioUrls([]);
+    setMixerTracks(0);
     setAudioLoading(clip.audio_tracks > 1);
     setPlaybackError(null);
-    startedAudio.current = new WeakSet();
-    lastAudioSeek.current = new WeakMap();
+    lastResync.current = -Infinity;
     videoBuffering.current = false;
+    awaitingPlaying.current = false;
 
     let cancelled = false;
+    const abort = new AbortController();
+    let mixer: TrackMixer | null = null;
     getClipWaveforms(clip.id)
       .then((wf) => {
         if (!cancelled) setWaveforms(wf);
       })
       .catch(() => {});
     getClipAudioTracks(clip.id)
-      .then((paths) => {
-        if (!cancelled) setTrackAudioUrls(paths.map(mediaUrl));
+      .then(async (paths) => {
+        if (cancelled || paths.length < 2) return;
+        mixer = new TrackMixer();
+        await mixer.load(paths.map(mediaUrl), abort.signal);
+        if (cancelled) return;
+        mixerRef.current = mixer;
+        setMixerTracks(mixer.trackCount);
       })
       .catch(() => {
-        if (!cancelled) setPlaybackError('Some audio tracks could not be loaded. Reopen the clip to try again.');
+        if (cancelled) return;
+        mixer?.dispose();
+        mixer = null;
+        setPlaybackError('Separate audio tracks could not be loaded, so the preview plays the first track only. Exports are not affected.');
       })
       .finally(() => {
         if (!cancelled) setAudioLoading(false);
@@ -253,34 +263,25 @@ export function EditorView({
 
     return () => {
       cancelled = true;
+      abort.abort();
+      mixer?.dispose();
+      if (mixerRef.current === mixer) mixerRef.current = null;
     };
   }, [clip.id]);
 
-  const multiTrackAudioActive = trackAudioUrls.length >= 2;
+  const multiTrackAudioActive = mixerTracks >= 2;
 
-  const pauseAudio = useCallback(() => {
-    for (const audio of audioRefs.current) {
-      if (!audio) continue;
-      audio.pause();
-      audio.playbackRate = 1;
-    }
+  const stopAudio = useCallback(() => {
+    mixerRef.current?.stop();
   }, []);
 
   const handlePlaybackError = useCallback((error: unknown) => {
     // Pause/seek can cancel an outstanding play request during normal transport.
     if (error instanceof DOMException && error.name === 'AbortError') return;
-    setPlaybackError('Playback could not start with audio. Press Play to try again.');
+    setPlaybackError('Playback could not start. Press Play to try again.');
     videoRef.current?.pause();
-    pauseAudio();
-  }, [pauseAudio]);
-
-  const playElement = useCallback((media: HTMLMediaElement) => {
-    if (pendingPlays.current.has(media)) return;
-    pendingPlays.current.add(media);
-    media.play()
-      .catch(handlePlaybackError)
-      .finally(() => pendingPlays.current.delete(media));
-  }, [handlePlaybackError]);
+    stopAudio();
+  }, [stopAudio]);
 
   const applyAudioMix = useCallback(() => {
     const v = videoRef.current;
@@ -292,58 +293,41 @@ export function EditorView({
       return;
     }
     v.muted = true;
-    for (let i = 0; i < trackAudioUrls.length; i++) {
-      const a = audioRefs.current[i];
-      if (!a) continue;
+    mixerRef.current?.setGains(Array.from({ length: mixerTracks }, (_, i) => {
       const tVol = Math.max(0, Math.min(1, trackVolumes[i] ?? 1));
-      a.muted = Boolean(mutedTracks[i]) || tVol <= 0.001;
-      a.volume = Math.max(0, Math.min(1, volume * tVol));
-    }
-  }, [multiTrackAudioActive, mutedTracks, trackVolumes, trackAudioUrls.length, volume]);
+      return mutedTracks[i] ? 0 : volume * tVol;
+    }));
+  }, [multiTrackAudioActive, mixerTracks, mutedTracks, trackVolumes, volume]);
 
-  const syncAudioElements = useCallback(
-    (forceSeek = false) => {
-      const v = videoRef.current;
-      if (!v || !multiTrackAudioActive) return;
-      const shouldPlay = !v.paused && !v.ended && !v.seeking && !videoBuffering.current;
-      const now = performance.now();
-      for (let i = 0; i < trackAudioUrls.length; i++) {
-        const a = audioRefs.current[i];
-        if (!a) continue;
-        const drift = v.currentTime - a.currentTime;
-        // Do not repeatedly cancel a pending decode/seek on every animation
-        // frame. Small clock differences are corrected without seeking.
-        if (a.readyState >= 1 && !a.seeking && !pendingPlays.current.has(a)
-          && ((forceSeek && Math.abs(drift) > 0.01)
-            || (shouldPlay && a.readyState >= 3 && Math.abs(drift) > 0.35
-              && now - (lastAudioSeek.current.get(a) ?? -Infinity) >= 1000))) {
-          a.currentTime = v.currentTime;
-          lastAudioSeek.current.set(a, now);
-        }
-        a.playbackRate = v.playbackRate * (Math.abs(drift) > 0.05 && Math.abs(drift) <= 0.35
-          ? (drift > 0 ? 1.03 : 0.97) : 1);
-        if (shouldPlay && a.paused && !a.ended && startedAudio.current.has(a)) {
-          playElement(a);
-        } else if (!shouldPlay && !a.paused) {
-          a.pause();
-        }
-      }
-    },
-    [multiTrackAudioActive, playElement, trackAudioUrls.length],
-  );
+  // The video is the transport master. The mixer starts at the video position
+  // whenever the video is actually advancing and stops whenever it is not.
+  // Drift is corrected by restarting the decoded buffers (instant, no decode)
+  // rather than seeking media elements or changing their playback rate.
+  const followVideo = useCallback(() => {
+    const v = videoRef.current;
+    const mixer = mixerRef.current;
+    if (!v || !mixer || !multiTrackAudioActive) return;
+    const shouldPlay = !v.paused && !v.ended && !v.seeking
+      && !videoBuffering.current && !awaitingPlaying.current;
+    if (!shouldPlay) {
+      if (mixer.playing) mixer.stop();
+      return;
+    }
+    const now = performance.now();
+    if (!mixer.playing
+      || (Math.abs(mixer.position - v.currentTime) > 0.12 && now - lastResync.current >= 500)) {
+      mixer.start(v.currentTime);
+      lastResync.current = now;
+    }
+  }, [multiTrackAudioActive]);
 
   useEffect(() => {
     applyAudioMix();
   }, [applyAudioMix]);
 
   useEffect(() => {
-    syncAudioElements(true);
-  }, [multiTrackAudioActive, trackAudioUrls, syncAudioElements]);
-
-  useEffect(() => {
-    const audio = audioRefs.current.filter((element) => element !== null);
-    return () => { for (const element of audio) element.pause(); };
-  }, [trackAudioUrls]);
+    followVideo();
+  }, [followVideo]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -357,13 +341,13 @@ export function EditorView({
       const v = videoRef.current;
       if (v) {
         setCurrentTime(v.currentTime);
-        syncAudioElements(false);
+        followVideo();
       }
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, syncAudioElements]);
+  }, [playing, followVideo]);
 
   const seekTo = useCallback(
     (secs: number) => {
@@ -372,9 +356,8 @@ export function EditorView({
       const clamped = Math.max(0, Math.min(duration, secs));
       v.currentTime = clamped;
       setCurrentTime(clamped);
-      syncAudioElements(true);
     },
-    [duration, syncAudioElements],
+    [duration],
   );
 
   const togglePlay = useCallback(() => {
@@ -382,27 +365,24 @@ export function EditorView({
     if (!v || audioLoading) return;
     if (v.paused) {
       setPlaybackError(null);
+      // The video clock does not advance between play() and its 'playing'
+      // event. Hold the mixer until then so it does not start early and then
+      // restart on the first drift check (an audible repeat at Play).
       videoBuffering.current = false;
+      awaitingPlaying.current = true;
       if (v.currentTime >= duration - 0.05) {
         seekTo(trimStart);
       }
       applyAudioMix();
-      syncAudioElements(true);
-      // WebKit grants audio playback per element. Start every track directly
-      // in the click/keyboard handler, before any event or promise boundary.
-      playElement(v);
-      if (multiTrackAudioActive) {
-        for (const audio of audioRefs.current) {
-          if (!audio) continue;
-          startedAudio.current.add(audio);
-          playElement(audio);
-        }
-      }
+      // WebKit only lets an AudioContext make sound once it is resumed inside a
+      // user gesture, so unlock it here before any promise boundary.
+      mixerRef.current?.unlock();
+      v.play().catch(handlePlaybackError);
     } else {
       v.pause();
-      pauseAudio();
+      stopAudio();
     }
-  }, [applyAudioMix, audioLoading, duration, multiTrackAudioActive, pauseAudio, playElement, seekTo, syncAudioElements, trimStart]);
+  }, [applyAudioMix, audioLoading, duration, handlePlaybackError, seekTo, stopAudio, trimStart]);
 
   // Editor keyboard shortcuts
   useEffect(() => {
@@ -542,13 +522,7 @@ export function EditorView({
       v.removeAttribute('src');
       v.load();
     }
-    for (const a of audioRefs.current) {
-      if (a) {
-        a.pause();
-        a.removeAttribute('src');
-        a.load();
-      }
-    }
+    mixerRef.current?.stop();
     await onDeleteClip(clip);
   };
 
@@ -641,50 +615,37 @@ export function EditorView({
                     setDuration(vd);
                     setTrimEnd((cur) => (cur === initialDur ? vd : Math.min(cur, vd)));
                   }
-                  syncAudioElements(true);
                 }}
                 onPlay={() => {
                   setPlaying(true);
                 }}
                 onPlaying={() => {
                   videoBuffering.current = false;
-                  syncAudioElements(false);
+                  awaitingPlaying.current = false;
+                  followVideo();
                 }}
                 onWaiting={() => {
                   videoBuffering.current = true;
-                  pauseAudio();
+                  stopAudio();
                 }}
                 onSeeking={() => {
                   videoBuffering.current = true;
-                  pauseAudio();
+                  stopAudio();
                 }}
                 onPause={() => {
                   setPlaying(false);
-                  pauseAudio();
+                  stopAudio();
                 }}
                 onEnded={() => {
                   setPlaying(false);
-                  pauseAudio();
+                  stopAudio();
                 }}
                 onSeeked={() => {
                   videoBuffering.current = false;
-                  syncAudioElements(true);
+                  followVideo();
                 }}
                 onError={() => handlePlaybackError(videoRef.current?.error)}
               />
-
-              {trackAudioUrls.map((url, idx) => (
-                <audio
-                  key={url}
-                  ref={(el) => {
-                    audioRefs.current[idx] = el;
-                  }}
-                  src={url}
-                  preload="auto"
-                  onLoadedMetadata={() => syncAudioElements(true)}
-                  onError={() => handlePlaybackError(audioRefs.current[idx]?.error)}
-                />
-              ))}
 
               {canvasMode === '9:16' && (
                 <div className="vertical-overlay-guide">

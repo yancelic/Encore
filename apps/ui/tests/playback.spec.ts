@@ -1,20 +1,21 @@
 import { expect, test, type Page } from '@playwright/test';
 import { mockDesktop } from './fixtures';
 
-// Controlled media clocks reproduce WebKit's per-element gesture gate and slow
-// audio startup. These tests exercise transport behavior, not codec support.
-async function editorWithMedia(page: Page, rejectFirstAudio = false) {
-  await page.addInitScript(({ rejectFirstAudio }) => {
+// A controlled video clock and a fake Web Audio graph reproduce WebKit's
+// gesture gate (an AudioContext stays suspended unless resumed inside a click
+// or key handler) and slow video startup. These tests exercise transport
+// behavior, not codec support.
+async function editorWithMedia(page: Page, options: { rejectFirstPlay?: boolean; failDecode?: boolean } = {}) {
+  await page.addInitScript(({ rejectFirstPlay, failDecode }) => {
     type MediaState = { paused: boolean; time: number; since: number; pending: boolean;
-      allowed: boolean; seeks: number; plays: number; reject?: (error: DOMException) => void };
+      reject?: (error: DOMException) => void };
     const states = new WeakMap<HTMLMediaElement, MediaState>();
     const state = (media: HTMLMediaElement) => {
-      if (!states.has(media)) states.set(media, { paused: true, time: 0, since: performance.now(),
-        pending: false, allowed: false, seeks: 0, plays: 0 });
+      if (!states.has(media)) states.set(media, { paused: true, time: 0, since: performance.now(), pending: false });
       return states.get(media)!;
     };
     let gesture = false;
-    let rejectAudio = rejectFirstAudio;
+    let rejectPlay = rejectFirstPlay;
     for (const event of ['click', 'keydown']) document.addEventListener(event, () => {
       gesture = true;
       setTimeout(() => { gesture = false; }, 0);
@@ -39,23 +40,17 @@ async function editorWithMedia(page: Page, rejectFirstAudio = false) {
           const s = state(this);
           s.time = value;
           s.since = performance.now();
-          s.seeks++;
-          if (s.pending) {
-            s.reject?.(new DOMException('Seek interrupted playback', 'AbortError'));
-            s.pending = false;
-            s.paused = true;
-          }
+          this.dispatchEvent(new Event('seeking'));
+          setTimeout(() => this.dispatchEvent(new Event('seeked')), 0);
         },
       },
     });
     proto.play = function () {
       const s = state(this);
-      s.plays++;
-      if (this instanceof HTMLAudioElement && ((!gesture && !s.allowed) || rejectAudio)) {
-        rejectAudio = false;
-        return Promise.reject(new DOMException('Audio requires a user gesture', 'NotAllowedError'));
+      if (rejectPlay) {
+        rejectPlay = false;
+        return Promise.reject(new DOMException('Playback was not allowed', 'NotAllowedError'));
       }
-      s.allowed = true;
       s.paused = false;
       s.pending = true;
       setTimeout(() => this.dispatchEvent(new Event('play')), 0);
@@ -67,7 +62,7 @@ async function editorWithMedia(page: Page, rejectFirstAudio = false) {
           s.since = performance.now();
           this.dispatchEvent(new Event('playing'));
           resolve();
-        }, this instanceof HTMLAudioElement ? 220 : 0);
+        }, 120);
       });
     };
     proto.pause = function () {
@@ -79,67 +74,124 @@ async function editorWithMedia(page: Page, rejectFirstAudio = false) {
       s.reject?.(new DOMException('Paused', 'AbortError'));
       setTimeout(() => this.dispatchEvent(new Event('pause')), 0);
     };
-    (window as any).__mediaState = (media: HTMLMediaElement) => ({ ...state(media), time: media.currentTime });
-  }, { rejectFirstAudio });
+
+    // Fake Web Audio: records every buffer source start/stop and gain target.
+    const log = { starts: [] as { track: number; offset: number; videoTime: number }[], stops: 0, gains: [] as number[],
+      resumedInGesture: false, state: 'suspended', closed: false, decodes: 0 };
+    (window as any).__audio = log;
+    class FakeParam {
+      constructor(readonly track: number) {}
+      cancelScheduledValues() {}
+      setTargetAtTime(value: number) { if (this.track >= 0) log.gains[this.track] = value; }
+    }
+    let gainCount = 0;
+    class FakeContext {
+      readonly destination = {};
+      private readonly t0 = performance.now();
+      get currentTime() { return (performance.now() - this.t0) / 1000; }
+      get state() { return log.state; }
+      createGain() {
+        // The first gain node is the master bus; the rest are per-track.
+        const track = gainCount++ - 1;
+        return { gain: new FakeParam(track), connect() {} };
+      }
+      createBufferSource() {
+        const node: any = { buffer: null, connect(gain: any) { node.track = gain.gain.track; },
+          start(_at: number, offset: number) {
+            log.starts.push({ track: node.track, offset, videoTime: (window as any).__videoTime() });
+          },
+          stop() { log.stops++; }, disconnect() {} };
+        return node;
+      }
+      async decodeAudioData() {
+        log.decodes++;
+        if (failDecode) throw new DOMException('Unsupported audio', 'EncodingError');
+        return { duration: 30 };
+      }
+      resume() {
+        if (gesture) { log.state = 'running'; log.resumedInGesture = true; }
+        return Promise.resolve();
+      }
+      close() { log.closed = true; return Promise.resolve(); }
+    }
+    (window as any).AudioContext = FakeContext;
+    (window as any).__videoTime = () => document.querySelector<HTMLVideoElement>('.editor-shell video')!.currentTime;
+  }, { rejectFirstPlay: !!options.rejectFirstPlay, failDecode: !!options.failDecode });
   const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true,
     audioTracks: ['/fixtures/game.m4a', '/fixtures/chat.m4a', '/fixtures/mic.m4a'] });
   await page.getByRole('button', { name: 'Open Overtime winner', exact: true }).click();
-  await expect(page.locator('.editor-shell audio')).toHaveCount(3);
   await expect(page.locator('.play-btn')).toBeEnabled();
   return errors;
 }
 
-async function audioState(page: Page) {
-  return page.locator('.editor-shell audio').evaluateAll((elements) => elements.map((element) => ({
-    ...(window as any).__mediaState(element), muted: (element as HTMLAudioElement).muted,
-    volume: (element as HTMLAudioElement).volume,
-  })));
-}
+type AudioLog = { starts: { track: number; offset: number; videoTime: number }[]; stops: number; gains: number[];
+  resumedInGesture: boolean; state: string; closed: boolean; decodes: number };
+const audioLog = (page: Page): Promise<AudioLog> => page.evaluate(() => (window as any).__audio);
+const videoMuted = (page: Page) => page.locator('.editor-shell video').evaluate((v: HTMLVideoElement) => v.muted);
 
-test('starts all audio in the Play gesture without seeking through slow startup', async ({ page }) => {
+test('decodes every track once and plays them from one Web Audio clock', async ({ page }) => {
   const errors = await editorWithMedia(page);
+  expect((await audioLog(page)).decodes).toBe(3);
+  await expect(page.locator('.editor-shell audio')).toHaveCount(0);
   await page.locator('.play-btn').click();
-  await expect.poll(async () => (await audioState(page)).every((s) => !s.pending && !s.paused)).toBe(true);
-  const tracks = await audioState(page);
-  expect(tracks.every((s) => s.plays === 1 && s.seeks === 0 && !s.muted && s.volume > 0)).toBe(true);
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect.poll(async () => (await audioLog(page)).starts.length).toBe(3);
+  const log = await audioLog(page);
+  expect(log.resumedInGesture).toBe(true);
+  expect(log.starts.map((s) => s.track).sort()).toEqual([0, 1, 2]);
+  expect(await videoMuted(page)).toBe(true);
   await page.getByRole('slider', { name: 'Chat audio volume', exact: true }).fill('0.5');
-  expect((await audioState(page))[1].volume).toBeCloseTo(0.425);
-  expect((await audioState(page)).every((s) => s.seeks === 0)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).gains[1]).toBeCloseTo(0.425);
+  await page.getByRole('button', { name: 'Mute Game audio', exact: true }).click();
+  await expect.poll(async () => (await audioLog(page)).gains[0]).toBe(0);
+  // Gain changes must not restart the tracks.
+  expect((await audioLog(page)).starts.length).toBe(3);
+  await expect(page.getByRole('alert')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
 
-test('shows rejected audio playback and lets Play retry the complete clip', async ({ page }) => {
-  await editorWithMedia(page, true);
+test('shows rejected playback and lets Play retry the complete clip', async ({ page }) => {
+  await editorWithMedia(page, { rejectFirstPlay: true });
   await page.locator('.play-btn').click();
   await expect(page.getByRole('alert')).toContainText('Press Play');
-  await expect.poll(() => page.locator('.editor-shell video').evaluate((v: HTMLVideoElement) => v.paused)).toBe(true);
-  await expect.poll(async () => (await audioState(page)).every((s) => s.paused)).toBe(true);
+  expect((await audioLog(page)).starts).toEqual([]);
   await page.locator('.play-btn').click();
-  await expect.poll(async () => (await audioState(page)).every((s) => !s.pending && !s.paused)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).starts.length).toBe(3);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
-test('holds audio while video buffers and resumes previously started tracks', async ({ page }) => {
+test('holds audio while video buffers and resumes at the video position', async ({ page }) => {
   await editorWithMedia(page);
   await page.keyboard.press('Space');
-  await expect.poll(async () => (await audioState(page)).every((s) => !s.pending && !s.paused)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).starts.length).toBe(3);
   await page.locator('.editor-shell video').dispatchEvent('waiting');
-  await expect.poll(async () => (await audioState(page)).every((s) => s.paused)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).stops).toBe(3);
+  await page.waitForTimeout(150);
   await page.locator('.editor-shell video').dispatchEvent('playing');
-  await expect.poll(async () => (await audioState(page)).every((s) => !s.pending && !s.paused)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).starts.length).toBe(6);
+  // Compare with the video position captured when each track was started.
+  const resumed = (await audioLog(page)).starts.slice(3);
+  expect(resumed.every((s) => s.offset > 0.1 && Math.abs(s.offset - s.videoTime) < 0.02)).toBe(true);
   await page.keyboard.press('Space');
-  await expect.poll(async () => (await audioState(page)).every((s) => s.paused)).toBe(true);
+  await expect.poll(async () => (await audioLog(page)).stops).toBe(6);
   await expect(page.getByRole('alert')).toHaveCount(0);
 });
 
-test('seeks paused tracks with the playhead and corrects small drift without more seeks', async ({ page }) => {
+test('seeking while paused stays silent and Play starts from the playhead', async ({ page }) => {
   await editorWithMedia(page);
   const lane = await page.locator('.video-lane .track-lane').boundingBox();
   await page.mouse.click(lane!.x + lane!.width / 2, lane!.y + lane!.height / 2);
-  expect((await audioState(page)).every((s) => s.time > 10 && s.seeks > 0 && s.paused)).toBe(true);
-  const seeks = (await audioState(page)).map((s) => s.seeks);
+  await page.waitForTimeout(50);
+  expect((await audioLog(page)).starts).toEqual([]);
   await page.locator('.play-btn').click();
-  await expect.poll(async () => (await audioState(page)).every((s) => !s.pending && !s.paused)).toBe(true);
-  expect((await audioState(page)).map((s) => s.seeks)).toEqual(seeks);
+  await expect.poll(async () => (await audioLog(page)).starts.length).toBe(3);
+  expect((await audioLog(page)).starts.every((s) => s.offset > 10)).toBe(true);
+});
+
+test('falls back to the video audio when tracks cannot be decoded', async ({ page }) => {
+  await editorWithMedia(page, { failDecode: true });
+  await expect(page.getByRole('alert')).toContainText('first track only');
+  await page.locator('.play-btn').click();
+  await expect.poll(() => page.locator('.editor-shell video').evaluate((v: HTMLVideoElement) => v.paused)).toBe(false);
+  expect(await videoMuted(page)).toBe(false);
+  expect((await audioLog(page)).starts).toEqual([]);
 });
