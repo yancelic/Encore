@@ -28,6 +28,30 @@ Windows configuration and clip IDs retain their existing behavior. macOS uses it
 
 The React app reads capabilities from Rust. Builds with the native runtime expose experimental recording, application audio, and login startup. Builds without it retain the library/editor preview. Native builds use manual/package-manager updates and never query the Windows updater feed. Wayland uses the system window-sharing dialog and Global Shortcuts portal; it cannot follow arbitrary focused windows. Select the game's audio application explicitly on Wayland because the window portal does not identify its owner.
 
+### Login startup
+
+The setting starts the **recorder** in the tray/menu bar after the user signs in;
+it does not open the library or run a system service before login. Save Settings
+after changing the switch.
+
+Windows stores a quoted, standard drive/UNC path in the per-user `Run` value
+`EncoreRecorder`. The library refreshes enabled registrations on launch so old
+extended-length (`\\?\`) paths and paths from a previous install are repaired.
+Windows Startup Apps can separately disable the entry; the repair does not
+override that approval. The recorder retries a failed tray registration every two
+seconds until Explorer is ready, then stops the timer. A hidden top-level tool
+window receives `TaskbarCreated` and restores the icon after Explorer restarts.
+An explicitly hidden tray stays hidden during recovery.
+
+macOS writes `~/Library/LaunchAgents/com.encore.recorder.plist` with `RunAtLoad`.
+Packaged builds use `/usr/bin/open -g -W -a` to launch the inner **Encore Recorder.app**
+through LaunchServices, matching manual launch and its privacy identity. Disabling
+the setting removes the plist for future logins; it does not stop an active recorder.
+Keep Encore installed at the registered location (normally `/Applications`) and
+allow its background item in System Settings if macOS requests approval. Screen,
+audio and microphone permissions still need to be granted. Login/menu-bar behavior
+requires a real Mac login test; Windows tests only verify the generated plist content.
+
 ## Build a preview
 
 Common prerequisites: Rust, Node.js, npm, and FFmpeg with H.264/AAC support and the `libx264` encoder. Native packages and GUI playback still need to be built and exercised on their target systems; a cross-target `cargo check` of shared crates is not a complete application test.
@@ -209,4 +233,4 @@ checks the bundle signature and exercises the relocated recorder before uploadin
 a CI artifact. This does not publish a release automatically. Stage that verified
 DMG with the signed Windows installer, `.sig`, `latest.json` and checksums in a
 draft versioned release, verify the assets, then publish it as latest. See
-[the updater release procedure](updates.md) and [0.6.0 notes](releases/v0.6.0.md).
+[the updater release procedure](updates.md) and [0.6.1 notes](releases/v0.6.1.md).

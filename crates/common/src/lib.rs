@@ -13,6 +13,9 @@ pub mod processes;
 #[path = "platform/portable/processes.rs"]
 pub mod processes;
 pub mod platform;
+#[cfg(any(target_os = "macos", test))]
+#[path = "platform/macos/autostart_entry.rs"]
+mod macos_autostart_entry;
 pub mod tray_icon;
 
 use global_hotkey::hotkey::HotKey;
@@ -62,7 +65,7 @@ pub struct Config {
     pub chat_device: Option<String>,
     /// Track 2 (Microphone): substring of input device name (`None` or `"off"` = silent, `"default"` = default mic).
     pub mic_device: Option<String>,
-    /// Whether the recorder starts automatically with Windows.
+    /// Whether the recorder starts automatically at login (legacy field name).
     pub start_with_windows: bool,
     /// Where finished clips are stored.
     pub clips_dir: PathBuf,

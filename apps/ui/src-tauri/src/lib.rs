@@ -298,12 +298,18 @@ async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
     run_blocking(move || {
         let prev_cfg = Config::load();
         std::fs::create_dir_all(&cfg.clips_dir).map_err(|e| e.to_string())?;
-        let target_exe = find_recorder_exe(res_dir.as_deref())
-            .or_else(|| std::env::current_exe().ok());
+        let target_exe = find_recorder_exe(res_dir.as_deref());
         let sync_startup = cfg.start_with_windows != prev_cfg.start_with_windows
             || (std::env::var_os("FLATPAK_ID").is_none() && (cfg.start_with_windows || autostart::is_autostart_enabled()));
-        if let Some(exe) = target_exe.filter(|_| encore_common::platform::capabilities().autostart && sync_startup) {
-            autostart::set_autostart(&exe, cfg.start_with_windows)
+        if encore_common::platform::capabilities().autostart && sync_startup {
+            // Disabling only removes the registration; it must still work if the
+            // helper went missing. Enabling must never fall back to the library UI.
+            let exe = match target_exe.as_deref() {
+                Some(exe) => exe,
+                None if !cfg.start_with_windows => Path::new(""),
+                None => return Err("Could not find the Encore recorder helper for login startup".into()),
+            };
+            autostart::set_autostart(exe, cfg.start_with_windows)
                 .map_err(|e| format!("Failed updating startup setting: {e}"))?;
         }
         cfg.save().map_err(|e| e.to_string())?;
@@ -311,8 +317,8 @@ async fn save_config(app: AppHandle, cfg: Config) -> Result<(), String> {
             Ok(IpcResponse::Ok) | Err(_) => Ok(()),
             Ok(IpcResponse::Err(e)) => {
                 let _ = prev_cfg.save();
-                if let Some(exe) = find_recorder_exe(res_dir.as_deref()).filter(|_| encore_common::platform::capabilities().autostart) {
-                    let _ = autostart::set_autostart(&exe, prev_cfg.start_with_windows);
+                if let Some(exe) = target_exe.as_deref().filter(|_| encore_common::platform::capabilities().autostart) {
+                    let _ = autostart::set_autostart(exe, prev_cfg.start_with_windows);
                 }
                 Err(e)
             }
@@ -752,7 +758,19 @@ pub fn run() {
                 encore_common::platform::set_resource_dir(resources);
             }
             #[cfg(windows)]
-            apply_windows_taskbar_icon(app.handle());
+            {
+                apply_windows_taskbar_icon(app.handle());
+                // Repair registrations from earlier builds (verbatim/stale resource
+                // paths) without changing Windows' separate Startup Apps approval.
+                if Config::load().start_with_windows {
+                    let resources = app.path().resource_dir().ok();
+                    if let Some(exe) = find_recorder_exe(resources.as_deref()) {
+                        if let Err(error) = autostart::set_autostart(&exe, true) {
+                            eprintln!("Could not repair recorder login startup: {error}");
+                        }
+                    }
+                }
+            }
             tray::start_wake_listener(app.handle().clone());
             // Restore an older recorder's hidden tray as well. This is not needed for
             // newly launched recorders, which always start with their own visible icon.

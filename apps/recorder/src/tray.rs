@@ -9,17 +9,18 @@ use windows::Win32::Foundation::{HWND, LPARAM, POINT, WPARAM};
 use windows::Win32::Graphics::Gdi::{CreateBitmap, DeleteObject, HBITMAP};
 use windows::Win32::UI::Shell::{
     NIF_ICON, NIF_MESSAGE, NIF_TIP, NIM_ADD, NIM_DELETE, NIM_MODIFY, NOTIFYICONDATAW,
-    Shell_NotifyIconW, ShellExecuteW,
+    Shell_NotifyIconW, ShellExecuteW, NOTIFY_ICON_MESSAGE,
 };
 use windows::Win32::UI::WindowsAndMessaging::{
     AppendMenuW, CreateIconIndirect, CreatePopupMenu, DestroyIcon, DestroyMenu, GetCursorPos,
     ICONINFO, MF_GRAYED, MF_SEPARATOR, MF_STRING, SW_SHOWNORMAL, SetForegroundWindow,
     TPM_BOTTOMALIGN, TPM_LEFTALIGN, TrackPopupMenu, WM_APP, WM_LBUTTONDBLCLK, WM_RBUTTONUP,
-    HICON,
+    HICON, KillTimer, SetTimer,
 };
 use windows::core::{HSTRING, PCWSTR, w};
 
 pub const WM_TRAY_CALLBACK: u32 = WM_APP + 1;
+pub const RETRY_TIMER: usize = 1;
 pub const CMD_STATUS: usize = 1001;
 pub const CMD_SAVE_CLIP: usize = 1002;
 pub const CMD_OPEN_UI: usize = 1003;
@@ -59,7 +60,10 @@ pub struct TrayIcon {
     hwnd: HWND,
     icon: Option<HICON>,
     badge: TrayBadge,
+    visible: bool,
     added: bool,
+    #[cfg(test)]
+    notify_override: Option<fn(NOTIFY_ICON_MESSAGE, &NOTIFYICONDATAW) -> bool>,
 }
 
 impl TrayIcon {
@@ -68,7 +72,10 @@ impl TrayIcon {
             hwnd,
             icon: None,
             badge,
+            visible,
             added: false,
+            #[cfg(test)]
+            notify_override: None,
         };
         if visible {
             s.add_icon(tooltip, badge);
@@ -76,58 +83,93 @@ impl TrayIcon {
         s
     }
 
+    fn notify(&self, message: NOTIFY_ICON_MESSAGE, data: &NOTIFYICONDATAW) -> bool {
+        #[cfg(test)]
+        if let Some(notify) = self.notify_override {
+            return notify(message, data);
+        }
+        unsafe { Shell_NotifyIconW(message, data).as_bool() }
+    }
+
+    fn update_retry_timer(&self) {
+        unsafe {
+            if self.visible && !self.added {
+                // Login can start the recorder before Explorer has a notification area.
+                // Retry only while missing; normal recording does not poll the shell.
+                SetTimer(Some(self.hwnd), RETRY_TIMER, 2_000, None);
+            } else {
+                let _ = KillTimer(Some(self.hwnd), RETRY_TIMER);
+            }
+        }
+    }
+
     fn add_icon(&mut self, tooltip: &str, badge: TrayBadge) {
-        if self.added {
+        if self.added || !self.visible {
             return;
         }
-        let icon = create_encore_icon(badge);
+        let Some(icon) = create_encore_icon(badge) else {
+            self.update_retry_timer();
+            return;
+        };
         let nid = NOTIFYICONDATAW {
             cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
             hWnd: self.hwnd,
             uID: 1,
-            uFlags: NIF_MESSAGE | NIF_TIP | if icon.is_some() { NIF_ICON } else { Default::default() },
+            uFlags: NIF_MESSAGE | NIF_TIP | NIF_ICON,
             uCallbackMessage: WM_TRAY_CALLBACK,
-            hIcon: icon.unwrap_or_default(),
+            hIcon: icon,
             szTip: encode_tip(tooltip),
             ..Default::default()
         };
-        let added = unsafe { Shell_NotifyIconW(NIM_ADD, &nid).as_bool() };
-        if let Some(old) = self.icon.replace(icon.unwrap_or_default()).filter(|_| icon.is_some()) {
+        let added = self.notify(NIM_ADD, &nid);
+        if let Some(old) = self.icon.replace(icon) {
             unsafe { let _ = DestroyIcon(old); }
-        }
-        if icon.is_none() {
-            self.icon = None;
         }
         self.badge = badge;
         self.added = added;
+        self.update_retry_timer();
     }
 
     pub fn set_visible(&mut self, visible: bool, tooltip: &str, badge: TrayBadge) {
+        self.visible = visible;
         if visible {
-            if !self.added {
-                self.add_icon(tooltip, badge);
-            } else {
-                self.set_state(tooltip, badge);
-            }
-        } else if self.added {
-            let nid = NOTIFYICONDATAW {
-                cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
-                hWnd: self.hwnd,
-                uID: 1,
-                ..Default::default()
-            };
-            unsafe {
-                let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
+            self.set_state(tooltip, badge);
+        } else {
+            if self.added {
+                let nid = NOTIFYICONDATAW {
+                    cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
+                    hWnd: self.hwnd,
+                    uID: 1,
+                    ..Default::default()
+                };
+                self.notify(NIM_DELETE, &nid);
             }
             self.added = false;
             if let Some(ic) = self.icon.take() {
                 unsafe { let _ = DestroyIcon(ic); }
             }
+            self.update_retry_timer();
         }
     }
 
-    pub fn set_state(&mut self, tooltip: &str, badge: TrayBadge) {
+    pub fn retry(&mut self, tooltip: &str, badge: TrayBadge) {
         if !self.added {
+            self.add_icon(tooltip, badge);
+        }
+    }
+
+    pub fn taskbar_created(&mut self, tooltip: &str, badge: TrayBadge) {
+        // Explorer discarded every registered icon, even if NIM_ADD succeeded before.
+        self.added = false;
+        self.add_icon(tooltip, badge);
+    }
+
+    pub fn set_state(&mut self, tooltip: &str, badge: TrayBadge) {
+        if !self.visible {
+            return;
+        }
+        if !self.added {
+            self.add_icon(tooltip, badge);
             return;
         }
         let mut flags = NIF_TIP;
@@ -147,14 +189,16 @@ impl TrayIcon {
             szTip: encode_tip(tooltip),
             ..Default::default()
         };
-        unsafe {
-            let _ = Shell_NotifyIconW(NIM_MODIFY, &nid);
-        }
+        let modified = self.notify(NIM_MODIFY, &nid);
         if let Some(ic) = new_icon {
             if let Some(old) = self.icon.replace(ic) {
                 unsafe { let _ = DestroyIcon(old); }
             }
             self.badge = badge;
+        }
+        if !modified {
+            self.added = false;
+            self.add_icon(tooltip, badge);
         }
     }
 
@@ -190,6 +234,7 @@ impl TrayIcon {
 
 impl Drop for TrayIcon {
     fn drop(&mut self) {
+        unsafe { let _ = KillTimer(Some(self.hwnd), RETRY_TIMER); }
         if self.added {
             let nid = NOTIFYICONDATAW {
                 cbSize: std::mem::size_of::<NOTIFYICONDATAW>() as u32,
@@ -197,9 +242,7 @@ impl Drop for TrayIcon {
                 uID: 1,
                 ..Default::default()
             };
-            unsafe {
-                let _ = Shell_NotifyIconW(NIM_DELETE, &nid);
-            }
+            self.notify(NIM_DELETE, &nid);
         }
         if let Some(ic) = self.icon.take() {
             unsafe {
@@ -244,6 +287,75 @@ fn _unused_wparam(_: WPARAM) {}
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+    use windows::Win32::UI::WindowsAndMessaging::DestroyWindow;
+
+    #[derive(Default)]
+    struct Shell {
+        fail_add: bool,
+        fail_modify: bool,
+        calls: Vec<NOTIFY_ICON_MESSAGE>,
+        tooltip: String,
+    }
+
+    thread_local! { static SHELL: RefCell<Shell> = RefCell::default(); }
+
+    fn notify(message: NOTIFY_ICON_MESSAGE, data: &NOTIFYICONDATAW) -> bool {
+        SHELL.with_borrow_mut(|shell| {
+            shell.calls.push(message);
+            let end = data.szTip.iter().position(|c| *c == 0).unwrap_or(data.szTip.len());
+            shell.tooltip = String::from_utf16_lossy(&data.szTip[..end]);
+            !(message == NIM_ADD && shell.fail_add || message == NIM_MODIFY && shell.fail_modify)
+        })
+    }
+
+    #[test]
+    fn tray_recovers_from_login_failure_and_explorer_restart_without_unhiding() {
+        // Use a real hidden window/timer, but simulate the shell being unavailable
+        // without restarting the user's Explorer or changing their notification area.
+        let hwnd = crate::windows_runtime::create_message_window();
+        let mut tray = TrayIcon::new(hwnd, "Ready", TrayBadge::Ready, false);
+        tray.notify_override = Some(notify);
+        SHELL.with_borrow_mut(|shell| *shell = Shell { fail_add: true, ..Default::default() });
+
+        tray.set_visible(true, "Ready", TrayBadge::Ready);
+        assert!(tray.visible && !tray.added);
+        tray.retry("Recording", TrayBadge::Recording);
+        assert!(!tray.added);
+        SHELL.with_borrow_mut(|shell| shell.fail_add = false);
+        tray.retry("Recording", TrayBadge::Recording);
+        assert!(tray.added);
+        assert_eq!(tray.badge, TrayBadge::Recording);
+        SHELL.with_borrow(|shell| assert_eq!(shell.tooltip, "Recording"));
+        let count = SHELL.with_borrow(|shell| shell.calls.len());
+        tray.retry("Recording", TrayBadge::Recording);
+        SHELL.with_borrow(|shell| assert_eq!(shell.calls.len(), count));
+
+        tray.taskbar_created("Ready again", TrayBadge::Ready);
+        assert!(tray.added);
+        SHELL.with_borrow(|shell| {
+            assert_eq!(shell.calls.last(), Some(&NIM_ADD));
+            assert_eq!(shell.tooltip, "Ready again");
+        });
+        SHELL.with_borrow_mut(|shell| shell.fail_modify = true);
+        tray.set_state("Changed", TrayBadge::Recording);
+        assert!(tray.added);
+        SHELL.with_borrow(|shell| assert!(shell.calls.ends_with(&[NIM_MODIFY, NIM_ADD])));
+
+        // Hiding while a retry is pending must cancel recovery, including later broadcasts.
+        SHELL.with_borrow_mut(|shell| shell.fail_add = true);
+        tray.taskbar_created("Ready", TrayBadge::Ready);
+        assert!(!tray.added);
+        tray.set_visible(false, "Ready", TrayBadge::Ready);
+        let count = SHELL.with_borrow(|shell| shell.calls.len());
+        tray.taskbar_created("Ready", TrayBadge::Ready);
+        tray.retry("Ready", TrayBadge::Ready);
+        tray.set_state("Recording", TrayBadge::Recording);
+        SHELL.with_borrow(|shell| assert_eq!(shell.calls.len(), count));
+        assert!(!tray.added);
+        drop(tray);
+        unsafe { DestroyWindow(hwnd).unwrap(); }
+    }
 
     #[test]
     fn procedural_tray_icon_builds_cleanly() {

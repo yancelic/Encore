@@ -290,6 +290,9 @@ jobs:
         run: cargo test --locked -p encore-common -p encore-encode -p encore-clipstore -p encore-editor
       - name: Test library backend
         run: cargo test --locked -p encore-ui --lib
+      - name: Test Windows tray startup and Explorer recovery
+        if: runner.os == 'Windows'
+        run: cargo test --locked -p encore-recorder tray -- --test-threads=1
       - name: Verify native Linux file clipboard formats
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo test --locked -p encore-ui --lib linux_clipboard_exchanges_file_mime_types -- --ignored --test-threads=1

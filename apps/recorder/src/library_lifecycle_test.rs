@@ -163,7 +163,7 @@ fn library_window(pid: u32) -> Option<HWND> {
 
 fn native_tray_command(owner: &OwnedProcesses, command: usize) {
     let window =
-        unsafe { FindWindowExW(Some(HWND_MESSAGE), None, w!("EncoreRecorderMsgWin"), w!("EncoreRecorder")).unwrap() };
+        unsafe { FindWindowW(w!("EncoreRecorderMsgWin"), w!("EncoreRecorder")).unwrap() };
     let mut pid = 0;
     unsafe {
         GetWindowThreadProcessId(window, Some(&mut pid));
