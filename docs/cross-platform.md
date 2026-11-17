@@ -1,13 +1,13 @@
 # Cross-platform development
 
-Work on `dev`. `main` is the production branch. Every successful `dev` push publishes macOS, Ubuntu and Flatpak packages to the rolling GitHub `beta` prerelease after all platform checks pass. These are beta previews: macOS has known feature bugs, and Ubuntu/Flatpak have not yet been tested on real user devices. Beta publication does not publish to Flathub or update `latest.json`.
+Work on `dev`. `main` is the production branch. Every successful `dev` push publishes macOS, Ubuntu and Flatpak packages to the rolling GitHub `beta` prerelease after all platform checks pass. These are development previews, separate from the versioned Windows and Apple Silicon macOS stable releases. Ubuntu/Flatpak have not yet been tested on real user devices. Beta publication does not publish to Flathub or update `latest.json`.
 
 ## Targets and current status
 
 | Target | Package | Current implementation |
 | --- | --- | --- |
 | Windows x64 | Existing signed NSIS installer | Full recorder, library, editor, and signed updates |
-| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Experimental OBS recorder; real-device device-discovery crash identified and fixed; repeated discovery regression and device retest pending |
+| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Stable since 0.6.0; OBS recorder, separate audio tracks and manual DMG updates; ad-hoc signed, without Developer ID or notarization |
 | Ubuntu 24.04 x64 | `.deb` | Experimental OBS recorder, X11/Wayland capture, PipeWire application audio; native acceptance tests in progress |
 | Linux x64 via Flatpak | Development `.flatpak` bundle | Source-built OBS runtime; CI build, install and synthetic sandbox replay verified; real-device portal/playback checks pending |
 
@@ -174,7 +174,7 @@ Once recording backends and native acceptance checks pass, attach each platform 
 
 ## Remaining recording work, in order
 
-1. Validate the Mac device-discovery fix on the user's MacBook Pro M1 Pro (the crash report identifies macOS 26.5.2). The report traced a null-source properties request into the OBS ScreenCaptureKit audio plugin. Discovery and name-to-UID routing now use CoreAudio metadata; the package regression repeatedly queries devices in a live engine and queries them from an offline helper. Both app bundles declare capture usage and microphone entitlements; denied screen permission leaves capture idle.
+1. macOS is promoted to stable for 0.6.0; continue regression testing on supported Macs. The earlier crash report traced a null-source properties request into the OBS ScreenCaptureKit audio plugin. Discovery and name-to-UID routing now use CoreAudio metadata; the package regression repeatedly queries devices in a live engine and queries them from an offline helper. Both app bundles declare capture usage and microphone entitlements; denied screen permission leaves capture idle.
 2. Continue real-device Linux acceptance checks. Controlled X11 window capture, GTK file clipboard formats and synthetic Flatpak sandbox build/replay have passed CI; Ubuntu/Flatpak desktop testing, Wayland portals and sandbox file-transfer permissions still need verification.
 3. Validate recording on devices: 1080p60, 60-second bounded RAM replay, repeated saves without encoder restart, separate game/chat/microphone routing, audio synchronization, permissions denied/revoked, application restart, minimize/restore, display changes, sleep/wake, and recording while the library is closed. Ubuntu version, GPU and desktop session details are still pending from the user.
 4. Test native playback, mixed exports, Flatpak folder/file-transfer permissions, clean installs/upgrades, and signing before publishing supported packages.
@@ -200,3 +200,13 @@ not establish screen/microphone permission or real capture correctness.
 - [VideoToolbox](https://developer.apple.com/documentation/videotoolbox/)
 - [ScreenCast portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.ScreenCast.html)
 - [GlobalShortcuts portal](https://flatpak.github.io/xdg-desktop-portal/docs/doc-org.freedesktop.portal.GlobalShortcuts.html)
+
+## Stable packages
+
+Stable releases use a matching `vX.Y.Z` tag and package versions.
+`stable-packages.yml` builds the Apple Silicon DMG, verifies native replay,
+checks the bundle signature and exercises the relocated recorder before uploading
+a CI artifact. This does not publish a release automatically. Stage that verified
+DMG with the signed Windows installer, `.sig`, `latest.json` and checksums in a
+draft versioned release, verify the assets, then publish it as latest. See
+[the updater release procedure](updates.md) and [0.6.0 notes](releases/v0.6.0.md).

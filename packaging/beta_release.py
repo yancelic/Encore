@@ -11,12 +11,13 @@ import tomllib
 
 ROOT = Path(__file__).resolve().parents[1]
 BETA = re.compile(r'(\d+\.\d+\.\d+)-beta\.(\d+)')
+VERSION = re.compile(r'(\d+\.\d+\.\d+)(?:-beta\.\d+)?')
 
 
 def release_plan(base, event, ref, run_number):
-    match = BETA.fullmatch(base)
+    match = VERSION.fullmatch(base)
     if not match:
-        raise ValueError(f'Expected a beta source version, got {base}')
+        raise ValueError(f'Invalid source version: {base}')
     if event == 'push' and ref == 'refs/heads/dev':
         if not str(run_number).isdigit() or int(run_number) < 1:
             raise ValueError('A positive workflow run number is required')
@@ -25,13 +26,15 @@ def release_plan(base, event, ref, run_number):
         tag = ref.removeprefix('refs/tags/')
         if tag != f'v{base}':
             raise ValueError(f'Tag {tag} does not match source version {base}')
+        if not BETA.fullmatch(base):
+            return base, ''
         return base, tag
     return base, ''
 
 
 def apply_version(root, version):
-    if not BETA.fullmatch(version):
-        raise ValueError(f'Invalid beta version: {version}')
+    if not VERSION.fullmatch(version):
+        raise ValueError(f'Invalid package version: {version}')
     cargo = root / 'Cargo.toml'
     cargo_text = cargo.read_text(encoding='utf-8')
     workspace = tomllib.loads(cargo_text)['workspace']

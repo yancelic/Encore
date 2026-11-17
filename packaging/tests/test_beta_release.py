@@ -26,9 +26,23 @@ class BetaReleaseTests(unittest.TestCase):
             beta.release_plan('0.6.0-beta.2', 'push', 'refs/tags/v0.6.0-beta.3', '87')
 
     def test_invalid_versions_and_run_numbers_are_rejected(self):
-        for version, number in [('0.6.0', '87'), ('bad', '87'), ('0.6.0-beta.1', '0'), ('0.6.0-beta.1', '../x')]:
+        for version, number in [('0.6.0-rc.1', '87'), ('bad', '87'), ('0.6.0-beta.1', '0'), ('0.6.0-beta.1', '../x')]:
             with self.assertRaises(ValueError):
                 beta.release_plan(version, 'push', 'refs/heads/dev', number)
+
+    def test_stable_sources_can_be_checked_without_publishing_a_beta_release(self):
+        self.assertEqual(beta.release_plan('0.6.0', 'pull_request', 'refs/pull/8/merge', '90'), ('0.6.0', ''))
+        self.assertEqual(beta.release_plan('0.6.0', 'push', 'refs/tags/v0.6.0', '90'), ('0.6.0', ''))
+        self.assertEqual(beta.release_plan('0.6.0', 'push', 'refs/heads/dev', '90'), ('0.6.0-beta.90', 'beta'))
+
+    def test_promoting_to_stable_updates_only_workspace_versions(self):
+        with tempfile.TemporaryDirectory() as folder:
+            root = Path(folder)
+            self.fixture(root)
+            beta.apply_version(root, '0.6.0')
+            self.assertEqual([p['version'] for p in tomllib.loads((root / 'Cargo.lock').read_text())['package']],
+                             ['0.6.0', '0.6.0-beta.1'])
+            self.assertEqual(json.loads((root / 'apps/ui/src-tauri/tauri.conf.json').read_text())['version'], '0.6.0')
 
     def fixture(self, root):
         (root / 'member').mkdir()
