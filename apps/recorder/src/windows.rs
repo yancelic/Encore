@@ -34,7 +34,7 @@ pub(crate) mod application_audio_test;
 pub(crate) mod tray;
 
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use encore_common::ipc::{RecorderState, RecorderStatus};
 use encore_common::tray_icon::TrayBadge;
@@ -46,14 +46,20 @@ use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
 use windows::Win32::System::Threading::CreateMutexW;
 use windows::Win32::UI::WindowsAndMessaging::{
     CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW, GetMessageW, PostMessageW,
-    PostQuitMessage, RegisterClassW, TranslateMessage, HWND_MESSAGE, MSG, WM_APP, WM_COMMAND,
-    WM_DESTROY, WNDCLASSW,
+    PostQuitMessage, RegisterClassW, RegisterWindowMessageW, TranslateMessage, MSG, WM_APP, WM_COMMAND,
+    WM_DESTROY, WM_TIMER, WNDCLASSW, WS_EX_TOOLWINDOW, WS_POPUP,
 };
 use windows::core::w;
 
 const WM_UPDATE_TRAY: u32 = WM_APP + 20;
 const WM_TRAY_CMD: u32 = WM_APP + 21;
 const WM_TRAY_EVENT: u32 = WM_APP + 22;
+const WM_RESTORE_TRAY: u32 = WM_APP + 23;
+
+fn taskbar_created_message() -> u32 {
+    static MESSAGE: OnceLock<u32> = OnceLock::new();
+    *MESSAGE.get_or_init(|| unsafe { RegisterWindowMessageW(w!("TaskbarCreated")) })
+}
 
 fn apply_cli_overrides(cfg: &mut Config, args: &[String]) {
     if let Some(d) = args.iter().skip_while(|a| *a != "--device").nth(1) {
@@ -93,6 +99,12 @@ fn format_status_text(st: &RecorderStatus) -> (String, String) {
 }
 
 unsafe extern "system" fn msg_wnd_proc(hwnd: HWND, msg: u32, wp: WPARAM, lp: LPARAM) -> LRESULT {
+    if msg == taskbar_created_message() && msg != 0 {
+        // Broadcasts are delivered directly to the window procedure, bypassing
+        // GetMessage. Queue the work for the loop that owns TrayIcon.
+        unsafe { let _ = PostMessageW(Some(hwnd), WM_RESTORE_TRAY, WPARAM(0), LPARAM(0)); }
+        return LRESULT(0);
+    }
     match msg {
         tray::WM_TRAY_CALLBACK => {
             unsafe {
@@ -132,21 +144,47 @@ fn create_message_window() -> HWND {
             ..Default::default()
         };
         RegisterClassW(&wc);
+        // Message-only windows never receive TaskbarCreated broadcasts. Keep an
+        // invisible top-level tool window instead (no taskbar or Alt+Tab entry).
         CreateWindowExW(
-            Default::default(),
+            WS_EX_TOOLWINDOW,
             w!("EncoreRecorderMsgWin"),
             w!("EncoreRecorder"),
-            Default::default(),
+            WS_POPUP,
             0,
             0,
             0,
             0,
-            Some(HWND_MESSAGE),
+            None,
             None,
             None,
             None,
         )
         .expect("create message window")
+    }
+}
+
+#[cfg(test)]
+mod tray_window_tests {
+    use super::*;
+    use windows::Win32::UI::WindowsAndMessaging::{
+        GetParent, IsWindowVisible, PeekMessageW, SendMessageW, PM_REMOVE,
+    };
+
+    #[test]
+    fn hidden_top_level_window_forwards_taskbar_created_to_recorder_loop() {
+        let hwnd = create_message_window();
+        unsafe {
+            assert!(!IsWindowVisible(hwnd).as_bool());
+            assert!(GetParent(hwnd).is_err());
+            let message = taskbar_created_message();
+            assert_ne!(message, 0);
+            SendMessageW(hwnd, message, None, None);
+            let mut queued = MSG::default();
+            assert!(PeekMessageW(&mut queued, Some(hwnd), WM_RESTORE_TRAY, WM_RESTORE_TRAY, PM_REMOVE).as_bool());
+            assert_eq!(queued.message, WM_RESTORE_TRAY);
+            DestroyWindow(hwnd).unwrap();
+        }
     }
 }
 
@@ -242,6 +280,14 @@ pub fn main() {
             DispatchMessageW(&msg);
 
             match msg.message {
+                WM_RESTORE_TRAY => {
+                    let st = status.lock().unwrap();
+                    tray_icon.taskbar_created(&format_status_text(&st).0, badge_for_status(&st));
+                }
+                WM_TIMER if msg.wParam.0 == tray::RETRY_TIMER => {
+                    let st = status.lock().unwrap();
+                    tray_icon.retry(&format_status_text(&st).0, badge_for_status(&st));
+                }
                 WM_TRAY_EVENT | tray::WM_TRAY_CALLBACK => {
                     let (menu_status, hk) = {
                         let st = status.lock().unwrap();
