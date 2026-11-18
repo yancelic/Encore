@@ -1,4 +1,4 @@
-export type CaptureMode = 'GameDetection' | 'ActiveWindow';
+export type CaptureMode = 'GameDetection' | 'ScreenCapture' | 'ActiveWindow';
 export type AudioMode = 'Devices' | 'Applications';
 
 export interface Config {

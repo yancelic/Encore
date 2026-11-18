@@ -67,7 +67,8 @@ fn apply_cli_overrides(cfg: &mut Config, args: &[String]) {
         cfg.audio_mode = encore_common::AudioMode::Devices;
     }
     if let Some(m) = args.iter().skip_while(|a| *a != "--mode").nth(1) {
-        cfg.mode = if m.starts_with('w') { CaptureMode::ActiveWindow } else { CaptureMode::GameDetection };
+        // Keep --mode window working for existing launchers while exposing screen mode.
+        cfg.mode = if m.starts_with(['w', 's']) { CaptureMode::ScreenCapture } else { CaptureMode::GameDetection };
     }
     if let Some(f) = args.iter().skip_while(|a| *a != "--fps").nth(1).and_then(|s| s.parse::<u32>().ok()) {
         cfg.fps = f.clamp(1, 240);

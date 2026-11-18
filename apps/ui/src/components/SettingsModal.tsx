@@ -32,7 +32,7 @@ interface SettingsModalProps {
 const PRESET_BUFFER_SECS = [15, 20, 30, 45, 60, 90, 120];
 const FPS_OPTIONS = [30, 60, 120, 144, 240];
 const HEIGHT_OPTIONS: { label: string; value: number }[] = [
-  { label: 'Native (Window Resolution)', value: 0 },
+  { label: 'Native (Capture Resolution)', value: 0 },
   { label: '1440p (QHD)', value: 1440 },
   { label: '1080p (Full HD)', value: 1080 },
   { label: '720p (HD)', value: 720 },
@@ -338,15 +338,17 @@ export function SettingsModal({
                     <option value="GameDetection">
                       {platform.portal_capture ? 'Selected Window (System Sharing Dialog)' : 'Game Detection (Recommended)'}
                     </option>
-                    <option value="ActiveWindow" disabled={platform.portal_capture}>
-                      Active Window (Follows Focus)
+                    <option value={platform.os === 'windows' ? 'ScreenCapture' : 'ActiveWindow'} disabled={platform.portal_capture}>
+                      {platform.os === 'windows' ? 'Screen Capture (Primary Display)' : 'Active Window (Follows Focus)'}
                     </option>
                   </select>
                 </div>
                 <p id="capture-mode-help" className="capture-mode-help">
                   {platform.portal_capture ? 'Choose a window in the system sharing dialog. Encore keeps recording that window when you switch apps. Your desktop controls which windows can be shared.' : draft.mode === 'GameDetection'
                     ? 'Records only the game window and stays on it when you switch apps. Minimizing pauses capture; restoring starts a new replay history.'
-                    : 'Records the focused window. Switching apps changes the recording target.'}
+                    : platform.os === 'windows'
+                      ? 'Records everything visible on your primary display, including other apps and notifications. Switching apps keeps the replay history.'
+                      : 'Records the focused window. Switching apps changes the recording target.'}
                 </p>
                 {platform.portal_capture && <button type="button" className="btn-secondary"
                   onClick={() => { setCaptureError(null); void selectCaptureSource().catch((error: unknown) => setCaptureError(String(error))); }}>
@@ -522,13 +524,17 @@ export function SettingsModal({
                 : 'Checking application audio support…'}
             </p>}
             {draft.audio_mode === 'Applications' ? <>
-              <p className="audio-routing-note">{platform.os === 'windows' ? 'Game audio follows the recorded application and its child processes. Chat uses an executable name, so title changes and restarts are handled automatically. No separate playback devices are needed.' : 'Game and chat audio are captured separately by application. Choose chat from the list of running applications.'}</p>
+              <p className="audio-routing-note">{platform.os === 'windows'
+                ? draft.mode === 'ScreenCapture'
+                  ? 'The Game track records all audio from the default playback device during screen capture. Chat is also captured separately and may be present in both tracks.'
+                  : 'Game audio follows the recorded application and its child processes. Chat uses an executable name, so title changes and restarts are handled automatically. No separate playback devices are needed.'
+                : 'Game and chat audio are captured separately by application. Choose chat from the list of running applications.'}</p>
               <div className="settings-grid audio-routing">
                 <div className="field-group">
                   <label htmlFor="game-application-audio">Game audio</label>
                   <select id="game-application-audio" value={draft.game_audio_enabled ? 'game' : 'off'}
                     onChange={(e) => setDraft((d) => ({ ...d, game_audio_enabled: e.target.value === 'game' }))}>
-                    <option value="game">Recorded application</option>
+                    <option value="game">{platform.os === 'windows' && draft.mode === 'ScreenCapture' ? 'System audio (Default Playback Device)' : 'Recorded application'}</option>
                     <option value="off">Off (Disabled)</option>
                   </select>
                   {platform.portal_capture && draft.game_audio_enabled && <>
