@@ -82,3 +82,23 @@ test('failed download or signature verification unlocks the UI and allows a fres
   await expect(page.getByRole('button', { name: 'Open Overtime winner' })).toBeVisible();
   expect(errors).toEqual([]);
 });
+
+test('stable macOS shows its version and checks the signed feed once', async ({ page }) => {
+  const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true, updates: true, update: '0.7.0' });
+  await expect(page.getByRole('complementary', { name: 'App update available' })).toContainText('0.7.0');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText(/^Encore \d+\.\d+\.\d+ · Checks when you open the library\.$/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check for updates', exact: true })).toBeEnabled();
+  expect(await page.evaluate(() => window.__uiCalls.filter((c) => c.command === 'check_for_updates').length)).toBe(1);
+  expect(errors).toEqual([]);
+});
+
+test('previews without in-app updates still show the installed version', async ({ page }) => {
+  const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await expect(page.getByText(/^Encore \d+\.\d+\.\d+.* · Update this preview through the download page or your package manager\.$/)).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Check for updates', exact: true })).toHaveCount(0);
+  expect(await page.evaluate(() => window.__uiCalls.some((c) => c.command === 'check_for_updates'))).toBe(false);
+  expect(errors).toEqual([]);
+});
+

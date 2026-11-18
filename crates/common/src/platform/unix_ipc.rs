@@ -115,6 +115,34 @@ pub fn list_audio_devices() -> Vec<AudioDeviceInfo> {
     }
 }
 
+/// Whether a live process owns an endpoint. Servers hold this lock until they fully stop,
+/// including after the socket file is gone, so it is safe to wait on before replacing files.
+pub fn endpoint_in_use(name: &str) -> Result<bool, String> {
+    lock_in_use(&socket_path(name)?.with_extension("lock"))
+}
+
+fn lock_in_use(path: &std::path::Path) -> Result<bool, String> {
+    let lock = match OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_CLOEXEC)
+        .open(path)
+    {
+        Ok(lock) => lock,
+        Err(e) if e.kind() == io::ErrorKind::NotFound => return Ok(false),
+        Err(e) => return Err(e.to_string()),
+    };
+    // A shared probe never conflicts with another probe; closing the file releases it.
+    if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+        return Ok(false);
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(true)
+    } else {
+        Err(error.to_string())
+    }
+}
+
 /// The lock outlives the socket, so a second process cannot unlink a live endpoint.
 pub struct LocalServer {
     listener: UnixListener,
@@ -193,6 +221,26 @@ mod tests {
         drop(first);
         assert!(!path.exists());
         let _second = LocalServer::bind_path(path).unwrap();
+    }
+
+    #[test]
+    fn endpoint_lock_reports_a_live_owner_until_it_stops() {
+        let path = runtime_dir()
+            .unwrap()
+            .join(format!("probe-{}.sock", std::process::id()));
+        let lock = path.with_extension("lock");
+        let _ = std::fs::remove_file(&lock);
+        assert!(!lock_in_use(&lock).unwrap());
+        let server = LocalServer::bind_path(path.clone()).unwrap();
+        assert!(lock_in_use(&lock).unwrap());
+        // Probing must not block the owner or a later restart.
+        assert!(lock_in_use(&lock).unwrap());
+        drop(server);
+        assert!(!lock_in_use(&lock).unwrap());
+        let restarted = LocalServer::bind_path(path).unwrap();
+        assert!(lock_in_use(&lock).unwrap());
+        drop(restarted);
+        let _ = std::fs::remove_file(&lock);
     }
 
     #[test]

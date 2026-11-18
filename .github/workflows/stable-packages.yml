@@ -59,16 +59,73 @@ jobs:
           cargo run --locked -p encore-recorder -- --self-test target/native-self-test
           ffmpeg -v error -i target/native-self-test/encore-self-test.mp4 -map 0 -f null -
           python3 native/obs/verify-self-test.py target/native-self-test/encore-self-test.mp4
-      - name: Build and verify the relocated stable package
+      # A stable certificate keeps macOS privacy permissions across releases.
+      # Ad-hoc signatures change on every build, so TCC treats each release as a new app.
+      - name: Import the stable macOS signing identity
+        env:
+          MACOS_CERT_P12: ${{ secrets.MACOS_CERT_P12 }}
+          MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
         run: |
+          set -euo pipefail
+          if [ -z "$MACOS_CERT_P12" ] || [ -z "$MACOS_CERT_PASSWORD" ]; then
+            echo "::error::MACOS_CERT_P12 and MACOS_CERT_PASSWORD secrets are required for stable macOS builds."
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/encore-signing.keychain-db"
+          keychain_password="$(openssl rand -hex 24)"
+          echo "$MACOS_CERT_P12" | base64 --decode > "$RUNNER_TEMP/identity.p12"
+          security create-keychain -p "$keychain_password" "$keychain"
+          security set-keychain-settings -lut 3600 "$keychain"
+          security unlock-keychain -p "$keychain_password" "$keychain"
+          security import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
+          rm -f "$RUNNER_TEMP/identity.p12"
+          security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Use the SHA-1 hash: the self-signed certificate is not trusted, so its name is not a "valid" identity.
+          hash=$(security find-identity -p codesigning "$keychain" | awk '/"Encore Release"/ { print $2; exit }')
+          if [ -z "$hash" ]; then
+            echo "::error::The Encore Release signing identity was not found in the imported certificate."
+            exit 1
+          fi
+          echo "ENCORE_CODESIGN_IDENTITY=$hash" >> "$GITHUB_ENV"
+          echo "ENCORE_SIGNING_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+      - name: Build and verify the relocated stable package
+        env:
+          # The same updater key signs the Windows installer; installed apps trust only its public key.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY is required to sign the macOS update archive."
+            exit 1
+          fi
           npm --prefix apps/ui ci
           npm --prefix apps/ui run build:preview
           target/release/bundle/macos/Encore.app/Contents/Resources/ffmpeg -version
           codesign --verify --deep --strict target/release/bundle/macos/Encore.app
+          # Fail instead of shipping an ad-hoc build if the stable identity was not used.
+          # TCC matches this designated requirement, so it must name the release certificate.
+          app=target/release/bundle/macos/Encore.app
+          leaf=$(echo "$ENCORE_CODESIGN_IDENTITY" | tr 'A-F' 'a-f')
+          for bundle in "$app" "$app/Contents/Resources/Encore Recorder.app"; do
+            codesign -d -r- "$bundle" 2>&1 | grep -q "certificate leaf = H\"$leaf\"" \
+              || { echo "::error::$bundle is not signed with Encore Release"; exit 1; }
+          done
           python3 native/obs/verify-package.py
+          # Verify the update archive against the public key shipped in the app, and reject tampering.
+          cargo test --locked --release -p encore-ui --test update_signature -- --ignored
+      - name: Remove the temporary signing keychain
+        if: always()
+        run: |
+          if [ -n "${ENCORE_SIGNING_KEYCHAIN:-}" ]; then
+            security delete-keychain "$ENCORE_SIGNING_KEYCHAIN" || true
+          fi
       - uses: actions/upload-artifact@v4
         with:
           name: encore-macos-stable-${{ github.ref_name }}
-          path: target/release/bundle/dmg/*.dmg
+          path: |
+            target/release/bundle/dmg/*.dmg
+            target/release/bundle/dmg/*.app.tar.gz
+            target/release/bundle/dmg/*.app.tar.gz.sig
           if-no-files-found: error
           retention-days: 14

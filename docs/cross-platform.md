@@ -7,7 +7,7 @@ Work on `dev`. `main` is the production branch. Pushes and pull requests run che
 | Target | Package | Current implementation |
 | --- | --- | --- |
 | Windows x64 | Existing signed NSIS installer | Full recorder, library, editor, and signed updates |
-| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Stable since 0.6.0; OBS recorder, separate audio tracks and manual DMG updates; ad-hoc signed, without Developer ID or notarization |
+| Apple Silicon macOS | ARM64 `.app` / `.dmg` | Stable since 0.6.0; OBS recorder, separate audio tracks; signed in-app updates from the first release signed with the stable `Encore Release` certificate, without Developer ID or notarization |
 | Ubuntu 24.04 x64 | `.deb` | Experimental OBS recorder, X11/Wayland capture, PipeWire application audio; native acceptance tests in progress |
 | Linux x64 via Flatpak | Development `.flatpak` bundle | Source-built OBS runtime; CI build, install and synthetic sandbox replay verified; real-device portal/playback checks pending |
 
@@ -21,12 +21,12 @@ Intel Macs and Linux ARM64 are outside the initial scope. The initial macOS prev
 - `apps/recorder/src/windows.rs`: the existing Windows recorder entry point and capture modules.
 - `apps/recorder/src/native`: Unix supervisor, bounded save queue, native FFI ownership, IPC, and graceful shutdown.
 - `native/obs`: OBS window/audio sources and encoders, the MP4 mux bridge, native menu lifecycle, and Linux desktop portals. The OBS GUI is not launched.
-- `apps/ui/src-tauri/src/platform`: native picker and updater implementations. Portable previews use manual/package-manager updates and never query the production Windows updater feed.
+- `apps/ui/src-tauri/src/platform`: native picker and updater implementations. Windows and stable macOS share the signed updater; Linux and beta previews use manual/package-manager updates and never query the production feed.
 - `crates/editor/src/clipboard`: Windows CF_HDROP and macOS AppleScript file sharing. Linux sharing runs through `apps/ui/src-tauri/src/platform/linux_clipboard.rs` on the GTK main thread, with file MIME targets and the File Transfer portal for sandbox access.
 
 Windows configuration and clip IDs retain their existing behavior. macOS uses its Application Support directory; Linux follows XDG configuration/video paths, including Flatpak's redirected config directory. Unix clip identifiers preserve case-sensitive filenames.
 
-The React app reads capabilities from Rust. Builds with the native runtime expose experimental recording, application audio, and login startup. Builds without it retain the library/editor preview. Native builds use manual/package-manager updates and never query the Windows updater feed. Wayland uses the system window-sharing dialog and Global Shortcuts portal; it cannot follow arbitrary focused windows. Select the game's audio application explicitly on Wayland because the window portal does not identify its owner.
+The React app reads capabilities from Rust. Builds with the native runtime expose experimental recording, application audio, and login startup. Builds without it retain the library/editor preview. Stable Apple Silicon builds use the signed in-app updater; Linux and beta native builds use manual/package-manager updates and never query the production feed. Wayland uses the system window-sharing dialog and Global Shortcuts portal; it cannot follow arbitrary focused windows. Select the game's audio application explicitly on Wayland because the window portal does not identify its owner.
 
 ### Login startup
 
@@ -263,8 +263,9 @@ not establish screen/microphone permission or real capture correctness.
 ## Stable packages
 
 Stable releases use a matching `vX.Y.Z` tag and package versions.
-`stable-packages.yml` builds the Apple Silicon DMG, verifies native replay,
-checks the bundle signature and exercises the relocated recorder before uploading
+`stable-packages.yml` builds the Apple Silicon DMG and the signed update archive
+with the stable `Encore Release` certificate, verifies native replay, checks the
+bundle and update signatures and exercises the relocated recorder before uploading
 a CI artifact. This does not publish a release automatically. Stage that verified
 DMG with the signed Windows installer, `.sig`, `latest.json` and checksums in a
 draft versioned release, verify the assets, then publish it as latest. See

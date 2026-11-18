@@ -1,7 +1,9 @@
+//! Signed in-app updates for Windows (NSIS) and stable Apple Silicon macOS (.app archive).
 //! Updates live only in the library process. The recorder has no updater dependency.
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(windows)]
 use encore_common::ipc::{self, IpcRequest, IpcResponse};
 use serde::Serialize;
 use tauri::{ipc::Channel, AppHandle, Manager, State};
@@ -118,6 +120,7 @@ pub async fn install_update(
         let recorder_was_running = stop_recorder_for_update()?;
         let _ = on_progress.send(UpdateProgress::Installing);
         // On Windows this launches NSIS and exits the UI; NSIS restarts the new UI.
+        // On macOS it replaces the .app bundle in place and returns; Encore relaunches below.
         if let Err(error) = update.install(bytes) {
             drop(guard);
             if recorder_was_running {
@@ -128,6 +131,8 @@ pub async fn install_update(
             }
             return Err(format!("Could not start the installer: {error}"));
         }
+        #[cfg(target_os = "macos")]
+        macos::relaunch_after_install(&app)?;
         Ok(())
     })
     .await
@@ -153,10 +158,12 @@ pub fn resume_after_update(app: &AppHandle) {
 
 /// The recorder holds this named object for its entire lifetime, including save draining.
 /// A missing IPC pipe alone does not mean its executable is safe to replace.
+#[cfg(windows)]
 fn recorder_is_running() -> Result<bool, String> {
     singleton_exists("Local\\EncoreRecorderSingleton")
 }
 
+#[cfg(windows)]
 fn singleton_exists(name: &str) -> Result<bool, String> {
     use windows::core::HSTRING;
     use windows::Win32::Foundation::{CloseHandle, ERROR_FILE_NOT_FOUND};
@@ -197,6 +204,7 @@ fn wait_for_recorder_exit(
     Ok(())
 }
 
+#[cfg(windows)]
 fn request_shutdown() -> Result<(), String> {
     use std::io::{Read, Write};
     use std::os::windows::io::AsRawHandle;
@@ -259,7 +267,61 @@ fn request_shutdown() -> Result<(), String> {
     }
 }
 
-#[cfg(test)]
+#[cfg(target_os = "macos")]
+use macos::{recorder_is_running, request_shutdown};
+
+#[cfg(target_os = "macos")]
+mod macos {
+    use encore_common::ipc::{self, IpcRequest, IpcResponse};
+    use tauri::AppHandle;
+
+    /// The recorder holds its socket lock for its entire lifetime, including save draining.
+    /// A missing socket alone does not mean its bundle is safe to replace.
+    pub fn recorder_is_running() -> Result<bool, String> {
+        ipc::endpoint_in_use(ipc::PIPE_NAME)
+            .map_err(|e| format!("Could not check recorder shutdown: {e}"))
+    }
+
+    pub fn request_shutdown() -> Result<(), String> {
+        // The socket transport bounds connect, write and read with short timeouts.
+        match ipc::send_request(&IpcRequest::Shutdown) {
+            Ok(IpcResponse::Ok) => Ok(()),
+            Ok(other) => Err(format!("Recorder refused shutdown: {other:?}")),
+            Err(e) => Err(format!(
+                "Recorder did not respond. Installation was not started: {e}"
+            )),
+        }
+    }
+
+    /// The bundle at the original path now holds the new version. Wait for this process to
+    /// release the library singleton before opening it; otherwise the new instance would
+    /// hand off to this exiting one and quit.
+    pub fn relaunch_after_install(app: &AppHandle) -> Result<(), String> {
+        let executable = std::env::current_exe().map_err(|e| e.to_string())?;
+        let bundle = executable
+            .ancestors()
+            .find(|path| path.extension().is_some_and(|extension| extension == "app"))
+            .ok_or("Encore was updated. Open it again to finish.")?
+            .to_path_buf();
+        std::process::Command::new("/bin/sh")
+            .args([
+                "-c",
+                r#"while /bin/kill -0 "$1" 2>/dev/null; do /bin/sleep 0.2; done; exec /usr/bin/open "$2""#,
+                "encore-relaunch",
+            ])
+            .arg(std::process::id().to_string())
+            .arg(&bundle)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .map_err(|e| format!("Encore was updated. Open it again to finish: {e}"))?;
+        app.exit(0);
+        Ok(())
+    }
+}
+
+#[cfg(all(test, windows))]
 mod tests {
     use super::*;
     use std::sync::mpsc;

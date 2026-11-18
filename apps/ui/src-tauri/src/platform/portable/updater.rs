@@ -1,4 +1,4 @@
-//! Native previews are updated manually; Flatpak updates belong to the package manager.
+//! Linux previews are updated manually; Flatpak updates belong to the package manager.
 use tauri::{AppHandle, State};
 
 #[derive(Default)]

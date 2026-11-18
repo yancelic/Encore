@@ -41,3 +41,27 @@ test('mismatched versions and unsigned installers cannot produce metadata', (t) 
   writeFileSync(join(root, 'apps/ui/package.json'), JSON.stringify({ version: '1.2.4' }));
   assert.throws(() => prepareUpdate({ root }), /versions in sync/);
 });
+
+test('a release without a macOS directory publishes only Windows', (t) => {
+  const { root } = fixture(t);
+  const manifest = prepareUpdate({ root, macosDir: undefined });
+  assert.deepEqual(Object.keys(manifest.platforms), ['windows-x86_64']);
+});
+
+test('the signed macOS archive from the matching stable run is added for Apple Silicon', (t) => {
+  const { root } = fixture(t);
+  const macosDir = join(root, 'macos-artifact');
+  mkdirSync(macosDir);
+  const archive = join(macosDir, 'Encore_1.2.3_aarch64.app.tar.gz');
+  writeFileSync(archive, 'test archive');
+  assert.throws(() => prepareUpdate({ root, macosDir }), /signed Encore_1.2.3_aarch64.app.tar.gz/);
+  writeFileSync(`${archive}.sig`, '');
+  assert.throws(() => prepareUpdate({ root, macosDir }), /macOS update archive signature is empty/);
+  writeFileSync(`${archive}.sig`, 'signed-macos-fixture\n');
+  const manifest = prepareUpdate({ root, macosDir });
+  assert.deepEqual(manifest.platforms['darwin-aarch64'], {
+    signature: 'signed-macos-fixture',
+    url: 'https://github.com/yancelic/Encore/releases/download/v1.2.3/Encore_1.2.3_aarch64.app.tar.gz',
+  });
+  assert.equal(manifest.platforms['windows-x86_64'].signature, 'signed-update-fixture');
+});

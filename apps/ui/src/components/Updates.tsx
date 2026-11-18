@@ -8,7 +8,7 @@ export function UpdateSettings({ updater }: { updater: Updater }) {
   const platform = usePlatform();
   if (!platform.updates) return <section className="settings-section">
     <h3>App updates</h3>
-    <p className="capture-mode-help">Update this preview through the download page or your package manager.</p>
+    <p className="capture-mode-help">Encore {version} · Update this preview through the download page or your package manager.</p>
   </section>;
   return (
     <section className="settings-section update-settings" aria-labelledby="updates-heading">

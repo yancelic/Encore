@@ -61,7 +61,7 @@ declare global {
 /** The bridge only exists inside the test browser. Nothing is added to app code. */
 export async function mockDesktop(
   page: Page,
-  options: { platform?: 'windows' | 'macos' | 'linux'; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
+  options: { platform?: 'windows' | 'macos' | 'linux'; updates?: boolean; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
     shareError?: boolean; shareDelay?: number; permissions?: Record<string, unknown>;
     audioTracks?: string[] } = {},
@@ -132,7 +132,7 @@ export async function mockDesktop(
             case 'get_platform_capabilities': {
               const os = options.platform ?? 'windows';
               const recording = os === 'windows' || !!options.nativeRecording;
-              return { os, recording, application_audio: recording, autostart: recording, updates: os === 'windows', portal_capture: !!options.wayland };
+              return { os, recording, application_audio: recording, autostart: recording, updates: options.updates ?? os === 'windows', portal_capture: !!options.wayland };
             }
             case 'get_config':
               return cfg;

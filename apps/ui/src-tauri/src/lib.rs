@@ -4,10 +4,10 @@ mod lifecycle;
 #[cfg(target_os = "linux")]
 #[path = "platform/linux_clipboard.rs"]
 mod linux_clipboard;
-#[cfg(windows)]
-#[path = "platform/windows/updater.rs"]
+#[cfg(any(windows, target_os = "macos"))]
+#[path = "platform/updater.rs"]
 mod updater;
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "macos")))]
 #[path = "platform/portable/updater.rs"]
 mod updater;
 #[cfg(windows)]
@@ -748,7 +748,7 @@ pub fn run() {
     };
     let state = AppState::open().expect("failed to open Encore clip database");
     let builder = tauri::Builder::default();
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "macos"))]
     let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
     builder
         .manage(updater::UpdateState::default())

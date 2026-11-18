@@ -21,9 +21,19 @@ pub fn capabilities() -> PlatformCapabilities {
         recording: cfg!(windows) || native_runtime().is_some(),
         application_audio: crate::processes::application_loopback_supported(),
         autostart: cfg!(windows) || native_runtime().is_some(),
-        updates: cfg!(windows),
+        updates: updates_supported(),
         portal_capture: cfg!(target_os = "linux") && std::env::var_os("WAYLAND_DISPLAY").is_some(),
     }
+}
+
+/// Windows and stable Apple Silicon macOS releases share the signed production feed.
+/// macOS betas, Linux and Flatpak are updated by download page or package manager.
+fn updates_supported() -> bool {
+    cfg!(windows) || (cfg!(target_os = "macos") && is_stable_version(env!("CARGO_PKG_VERSION")))
+}
+
+fn is_stable_version(version: &str) -> bool {
+    !version.contains('-')
 }
 
 /// Preserve the existing Windows location so upgrades retain config and library data.
@@ -246,7 +256,14 @@ mod tests {
     #[test]
     fn recording_requires_the_platform_runtime() {
         assert_eq!(capabilities().recording, cfg!(windows) || native_runtime().is_some());
-        assert_eq!(capabilities().updates, cfg!(windows));
+        assert_eq!(capabilities().updates, updates_supported());
+        assert!(!cfg!(target_os = "linux") || !updates_supported());
+    }
+
+    #[test]
+    fn beta_previews_stay_off_the_production_feed() {
+        assert!(is_stable_version("0.6.2"));
+        assert!(!is_stable_version("0.6.2-beta.14"));
     }
 
     #[test]
