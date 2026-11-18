@@ -7,6 +7,48 @@ const calls = (page: Page, command: string) =>
     command,
   );
 
+test('library message stays dismissed after reopening the library and reloading', async ({ page }) => {
+  await mockDesktop(page);
+  const message = page.getByText(/Good games/);
+  await expect(message).toBeVisible();
+  await page.getByRole('button', { name: 'Dismiss library message' }).click();
+  await expect(message).toHaveCount(0);
+  await expect(page.getByText('Saved on this device')).toBeVisible();
+  await page.getByRole('button', { name: 'Open Overtime winner', exact: true }).click();
+  await page.getByRole('button', { name: 'All replays', exact: true }).click();
+  await expect(message).toHaveCount(0);
+  await page.reload();
+  await expect(page.getByRole('heading', { name: 'Your replays.' })).toBeVisible();
+  await expect(message).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Dismiss library message' })).toHaveCount(0);
+});
+
+test('interface text and images cannot be selected or dragged while fields remain editable', async ({ page }) => {
+  await mockDesktop(page);
+  const heading = page.getByRole('heading', { name: 'Your replays.' });
+  const box = (await heading.boundingBox())!;
+  await page.mouse.move(box.x + 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width - 2, box.y + box.height / 2, { steps: 12 });
+  await page.mouse.up();
+  expect(await page.evaluate(() => window.getSelection()?.toString())).toBe('');
+  for (const selector of ['.brand-mark-img', '.clip-card img']) {
+    expect(await page.locator(selector).first().evaluate(element =>
+      element.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true })),
+    )).toBe(false);
+  }
+  const search = page.getByRole('searchbox');
+  await search.fill('Overtime');
+  await search.selectText();
+  expect(await search.evaluate(element => {
+    const input = element as HTMLInputElement;
+    return input.value.slice(input.selectionStart!, input.selectionEnd!);
+  })).toBe('Overtime');
+  await page.keyboard.type('Off the backboard');
+  await expect(search).toHaveValue('Off the backboard');
+  await expect(page.locator('.clip-card')).toHaveCount(1);
+});
+
 test('library search, game navigation, favorites and list actions remain usable', async ({
   page,
 }, testInfo) => {
@@ -248,24 +290,48 @@ test('audio routing keeps device choices and accepts a generic application name'
 test('offline and first-run states still expose recorder controls', async ({
   page,
 }, testInfo) => {
-  await mockDesktop(page, { empty: true, offline: true });
+  await mockDesktop(page, { empty: true, offline: true, recorderDelay: 700 });
   await expect(
     page.getByRole('heading', { name: 'Your next great play starts here.' }),
   ).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('empty.png') });
+  const toggle = page.locator('.recorder-toggle');
+  const size = async () => {
+    const box = (await toggle.boundingBox())!;
+    return { width: box.width, height: box.height };
+  };
+  const initialSize = await size();
   await page
     .getByRole('button', { name: 'Start Recorder', exact: true })
     .click();
+  await expect(toggle).toHaveText('Starting...');
+  expect(await size()).toEqual(initialSize);
   await expect.poll(() => calls(page, 'start_recorder')).toHaveLength(1);
   await expect(
     page.getByText('Ready to capture', { exact: true }),
   ).toBeVisible();
+  expect(await size()).toEqual(initialSize);
+  for (const theme of ['light', 'dark'] as const) {
+    await page.emulateMedia({ colorScheme: theme });
+    await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
+    const colors = await page.locator('.status-pill.ready').evaluate(element => ({
+      label: getComputedStyle(element).color,
+      dot: getComputedStyle(element.querySelector('.status-dot')!).backgroundColor,
+      offlineDot: 'rgb(157, 167, 174)',
+    }));
+    expect(colors.dot).not.toBe(colors.offlineDot);
+    expect(colors.label).toBe(theme === 'dark' ? 'rgb(127, 216, 166)' : 'rgb(31, 110, 68)');
+    await page.screenshot({ path: testInfo.outputPath(`recorder-ready-${theme}.png`) });
+  }
   await page
     .getByRole('button', { name: 'Stop background recorder', exact: true })
     .click();
+  await expect(toggle).toHaveText('Stopping...');
+  expect(await size()).toEqual(initialSize);
   await expect(
     page.getByRole('button', { name: 'Start Recorder', exact: true }),
   ).toBeVisible();
+  expect(await size()).toEqual(initialSize);
 });
 
 for (const size of [

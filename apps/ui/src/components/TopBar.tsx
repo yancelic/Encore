@@ -75,14 +75,14 @@ export function TopBar({
       </div>
 
       <div className="top-center">
-        <div className="status-pill" role="status" title={status?.error ?? statusText}>
+        <div className={`status-pill ${dotClass}`} role="status" title={status?.error ?? statusText}>
           <span className={`status-dot ${dotClass}`} />
           <span className="status-label">{statusText}</span>
         </div>
 
         {platform.recording && (!status ? (
           <button
-            className="btn-primary"
+            className="btn-primary recorder-toggle"
             onClick={onStartRecorder}
             disabled={busyAction === 'start'}
             title="Start background clip recorder"
@@ -92,6 +92,16 @@ export function TopBar({
           </button>
         ) : (
           <>
+            <button
+              className="btn-secondary recorder-toggle"
+              onClick={onStopRecorder}
+              disabled={busyAction === 'stop'}
+              title="Stop background recorder"
+              aria-label="Stop background recorder"
+            >
+              <Square size={12} fill="currentColor" />
+              {busyAction === 'stop' ? 'Stopping...' : 'Stop Recorder'}
+            </button>
             {status.state === 'Recording' && (
               <button
                 className="btn-primary"
@@ -103,15 +113,6 @@ export function TopBar({
                 Save Clip
               </button>
             )}
-            <button
-              className="btn-icon"
-              onClick={onStopRecorder}
-              disabled={busyAction === 'stop'}
-              title="Stop background recorder"
-              aria-label="Stop background recorder"
-            >
-              <Square size={12} fill="currentColor" />
-            </button>
           </>
         ))}
 

@@ -347,7 +347,7 @@ export function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" onDragStart={(event) => event.preventDefault()}>
       <TopBar
         status={status}
         config={config}
