@@ -20,6 +20,9 @@ jobs:
     env:
       CARGO_BUILD_JOBS: 2
       ENCORE_SELF_TEST_ENCODER: obs_x264
+      HOMEBREW_NO_AUTO_UPDATE: '1'
+      HOMEBREW_NO_INSTALL_CLEANUP: '1'
+      HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -42,7 +45,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          cache-on-failure: true
+          # Restores the Apple Silicon OBS bridge cache saved on main; tag-scoped saves are never reused.
+          shared-key: macos-app-bundle
+          save-if: false
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -80,7 +85,13 @@ jobs:
           security import "$RUNNER_TEMP/identity.p12" -k "$keychain" -P "$MACOS_CERT_PASSWORD" -T /usr/bin/codesign
           rm -f "$RUNNER_TEMP/identity.p12"
           security set-key-partition-list -S apple-tool:,apple: -s -k "$keychain_password" "$keychain" >/dev/null
-          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          # Keep the existing search list; paths may contain spaces (bash 3.2 has no mapfile).
+          existing=()
+          while IFS= read -r line; do
+            line="${line#"${line%%[![:space:]]*}"}"
+            existing+=("$(echo "$line" | tr -d '"')")
+          done < <(security list-keychains -d user)
+          security list-keychains -d user -s "$keychain" "${existing[@]}"
           # Use the SHA-1 hash: the self-signed certificate is not trusted, so its name is not a "valid" identity.
           hash=$(security find-identity -p codesigning "$keychain" | awk '/"Encore Release"/ { print $2; exit }')
           if [ -z "$hash" ]; then
