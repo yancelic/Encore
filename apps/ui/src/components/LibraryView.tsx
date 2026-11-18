@@ -25,6 +25,16 @@ import {
 } from '../api';
 import type { ClipRecord, SortOrder } from '../types';
 
+const SIDEBAR_MESSAGE_DISMISSED_KEY = 'encore.sidebarMessageDismissed';
+
+function isSidebarMessageDismissed(): boolean {
+  try {
+    return localStorage.getItem(SIDEBAR_MESSAGE_DISMISSED_KEY) === 'true';
+  } catch {
+    return false;
+  }
+}
+
 interface LibraryViewProps {
   clips: ClipRecord[];
   allGames: string[];
@@ -69,6 +79,7 @@ export function LibraryView({
   onCreateMontage,
 }: LibraryViewProps) {
   const platform = usePlatform();
+  const [messageDismissed, setMessageDismissed] = useState(isSidebarMessageDismissed);
   const [viewMode, setViewMode] = useState<'grid' | 'list'>('grid');
   const [montageMode, setMontageMode] = useState(false);
   const [selectedClips, setSelectedClips] = useState<ClipRecord[]>([]);
@@ -76,6 +87,15 @@ export function LibraryView({
   const [copyingId, setCopyingId] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
   const filtered = Boolean(search || gameFilter || favoritesOnly);
+
+  const dismissSidebarMessage = () => {
+    setMessageDismissed(true);
+    try {
+      localStorage.setItem(SIDEBAR_MESSAGE_DISMISSED_KEY, 'true');
+    } catch {
+      // Keep dismissal usable when persistent storage is unavailable.
+    }
+  };
 
   const groups = useMemo(() => {
     if (sortOrder === 'Longest')
@@ -231,14 +251,24 @@ export function LibraryView({
           )}
         </div>
         <div className="sidebar-bottom">
-          <span className="sidebar-replay-mark" aria-hidden="true">
-            ↶
-          </span>
-          <p>
-            Good games
-            <br />
-            are worth keeping.
-          </p>
+          {!messageDismissed && <div className="sidebar-message">
+            <button
+              className="sidebar-message-dismiss"
+              onClick={dismissSidebarMessage}
+              aria-label="Dismiss library message"
+              title="Hide this message permanently"
+            >
+              <X size={15} />
+            </button>
+            <span className="sidebar-replay-mark" aria-hidden="true">
+              ↶
+            </span>
+            <p>
+              Good games
+              <br />
+              are worth keeping.
+            </p>
+          </div>}
           <div className="storage-note" title={clipsDir}>
             <FolderOpen size={14} />
             <span>Saved on this device</span>
