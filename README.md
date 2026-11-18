@@ -4,7 +4,7 @@
 
 Low-overhead game clipping and multi-track replay studio built with Rust and Tauri 2.
 
-Windows and Apple Silicon macOS are stable releases. Ubuntu 24.04+ x64 and Linux Flatpak are available as beta previews from `dev`. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging, CI and the remaining milestones.
+Windows and Apple Silicon macOS are stable releases. Ubuntu 24.04+ x64 and Linux Flatpak remain experimental. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging and platform limitations.
 
 ## Download
 
@@ -12,14 +12,14 @@ Windows and Apple Silicon macOS are stable releases. Ubuntu 24.04+ x64 and Linux
 | --- | --- | --- |
 | Windows 10/11 x64 | **Stable — v0.6.1** | [Windows installer](https://github.com/yancelic/Encore/releases/download/v0.6.1/Encore_0.6.1_x64-setup.exe) |
 | macOS 15+ Apple Silicon | **Stable — v0.6.1** | [macOS `.dmg`](https://github.com/yancelic/Encore/releases/download/v0.6.1/Encore_0.6.1_aarch64.dmg) |
-| Ubuntu 24.04+ x64 | **Beta — not yet tested on a real device** | [Ubuntu `.deb`](https://github.com/yancelic/Encore/releases/download/beta/Encore-Ubuntu-amd64.deb) |
-| Linux x86_64 via Flatpak | **Beta — not yet tested on a real device** | [Flatpak bundle](https://github.com/yancelic/Encore/releases/download/beta/Encore-Linux-x86_64.flatpak) |
+| Ubuntu 24.04+ x64 | **Beta — not yet tested on a real device** | [Build and test guide](docs/cross-platform.md#ubuntu) |
+| Linux x86_64 via Flatpak | **Beta — not yet tested on a real device** | [Build and test guide](docs/cross-platform.md#flatpak) |
 
 > **macOS:** Open the DMG and drag Encore into Applications. Quit Encore and its recorder before replacing an older install. In Settings → Permissions, grant the requested permissions to **Encore Recorder**. This package is ad-hoc signed, without Apple Developer ID signing or notarization; macOS may require **Privacy & Security → Open Anyway** after the first launch attempt. Updates use manual installation. See the [0.6.1 release notes](docs/releases/v0.6.1.md) for details.
 
 > **Linux beta:** Ubuntu and Flatpak builds have passed automated CI checks, including synthetic recording tests, but have **not yet been tested on real user devices**. Desktop integration, Wayland permissions, GPU drivers, audio routing and playback may need fixes. See the [Linux beta test guide](docs/linux-beta-testing.md) for installation, checks and log locations.
 
-The [Linux beta release](https://github.com/yancelic/Encore/releases/tag/beta) is refreshed after each successful `dev` push. Each build has a new beta package version; `BUILD.json` identifies its source commit and CI run. Checksums are attached to the release. Beta packages use manual installation.
+Development previews are published only by an explicitly requested manual release run; pushes and pull requests do not publish packages. Check [Releases](https://github.com/yancelic/Encore/releases) for available previews. Published previews include `BUILD.json` with their source commit and CI run, plus checksums, and use manual installation. Normal Windows and Apple Silicon macOS downloads remain the stable packages above.
 
 [All releases](https://github.com/yancelic/Encore/releases) · [Stable release notes](https://github.com/yancelic/Encore/releases/tag/v0.6.1)
 

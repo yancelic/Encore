@@ -9,6 +9,14 @@ on:
     branches: [dev, main]
   workflow_dispatch:
     inputs:
+      publish_beta:
+        description: Publish a verified development prerelease (dev only)
+        type: boolean
+        default: false
+      beta_target:
+        description: Target X.Y.Z, strictly newer than latest stable (required only for publication)
+        type: string
+        default: ''
       build_previews:
         description: Build macOS ARM64, Ubuntu and Flatpak development artifacts
         type: boolean
@@ -23,15 +31,18 @@ permissions:
 
 concurrency:
   group: platforms-${{ github.ref }}
-  # Finish a dev publication before starting another update of the beta channel.
+  # Do not interrupt an explicitly requested publication with a later dev check.
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_BUILD_JOBS: 2
+  ENCORE_PUBLISH_BETA: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_beta }}
+  ENCORE_BETA_TARGET: ${{ inputs.beta_target }}
+  ENCORE_LINUX_ARTIFACT_RUN_ID: ${{ inputs.linux_artifact_run_id }}
 
 jobs:
   release-version:
-    name: Plan beta package version
+    name: Validate package version and publication request
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.version.outputs.version }}
@@ -42,11 +53,14 @@ jobs:
         run: python3 -m unittest discover -s packaging/tests -v
       - name: Plan package version and publication channel
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: python3 packaging/beta_release.py plan >> "$GITHUB_OUTPUT"
 
   flatpak:
     name: Flatpak native runtime
-    if: ${{ !cancelled() && (needs.obs-linux.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')) }}
+    if: ${{ !cancelled() && needs.release-version.result == 'success' && (needs.obs-linux.result == 'success' || (github.event_name == 'workflow_dispatch' && inputs.linux_artifact_run_id != '')) }}
     needs: [release-version, obs-linux]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -324,8 +338,14 @@ jobs:
           retention-days: 14
 
   publish-beta:
-    name: Publish macOS and Linux beta
-    if: github.event_name == 'push' && needs.release-version.outputs.tag != ''
+    name: Publish requested development prerelease
+    if: >-
+      ${{ !cancelled() && github.event_name == 'workflow_dispatch' &&
+          github.ref == 'refs/heads/dev' && inputs.publish_beta &&
+          needs.release-version.outputs.tag == 'beta' &&
+          needs.release-version.result == 'success' &&
+          needs.obs-linux.result == 'success' && needs.obs-macos.result == 'success' &&
+          needs.flatpak.result == 'success' && needs.native.result == 'success' }}
     needs: [release-version, obs-linux, obs-macos, flatpak, native]
     runs-on: ubuntu-24.04
     permissions:
@@ -347,7 +367,9 @@ jobs:
       - name: Prepare tested packages, checksums and release notes
         env:
           ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
-        run: python3 packaging/beta_release.py prepare
+        run: |
+          python3 packaging/beta_release.py prepare
+          python3 scripts/check_public_content.py --text-file target/beta-release-notes.md
       - name: Publish a prerelease with the verified assets
         env:
           GH_TOKEN: ${{ github.token }}

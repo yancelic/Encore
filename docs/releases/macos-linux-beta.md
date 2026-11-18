@@ -1,4 +1,4 @@
-Beta previews for **macOS 15+ Apple Silicon, Ubuntu 24.04+ x64 and Linux x86_64 via Flatpak**.
+Manually requested development previews for **macOS 15+ Apple Silicon, Ubuntu 24.04+ x64 and Linux x86_64 via Flatpak**.
 
 **Stable Windows and Apple Silicon macOS:** [Latest Encore release](https://github.com/yancelic/Encore/releases/latest).
 
@@ -39,11 +39,15 @@ flatpak run com.encore.clipper
 
 ### Testing and updates
 
-Each successful `dev` push refreshes the rolling **beta** prerelease after native
-regression checks, macOS/Ubuntu package checks and Flatpak sandbox checks pass.
-Packages receive an increasing beta version. Download and install a newer beta
-manually to test fixes. `BUILD.json` records the package version, exact source
-commit and CI run. `SHA256SUMS.txt` verifies all attached files.
+This preview is published only by a maintainer's explicit manual run from `dev`,
+after native regression checks, macOS/Ubuntu package checks and Flatpak sandbox
+checks pass. Pushes, PRs and ordinary manual checks never publish a beta. Its
+target version must be newer than the latest stable release. Windows and Apple
+Silicon macOS continue to have separate stable releases.
+
+Download and install a newer preview manually to test fixes. `BUILD.json` records
+the package version, exact source commit and CI run. `SHA256SUMS.txt` verifies all
+attached files. See the [manual publication procedure](https://github.com/yancelic/Encore/blob/main/docs/cross-platform.md#publish-a-development-preview-manually).
 
 The attached **LINUX-TESTING.md** contains a Turkish test checklist and log paths.
 When reporting a problem, include the beta version, OS/desktop/session type,

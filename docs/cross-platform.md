@@ -1,6 +1,6 @@
 # Cross-platform development
 
-Work on `dev`. `main` is the production branch. Every successful `dev` push publishes macOS, Ubuntu and Flatpak packages to the rolling GitHub `beta` prerelease after all platform checks pass. These are development previews, separate from the versioned Windows and Apple Silicon macOS stable releases. Ubuntu/Flatpak have not yet been tested on real user devices. Beta publication does not publish to Flathub or update `latest.json`.
+Work on `dev`. `main` is the production branch. Pushes and pull requests run checks but never publish a beta. Development prereleases require an explicit manual Actions run from `dev` and are separate from the Windows and Apple Silicon macOS stable releases. Ubuntu/Flatpak have not yet been tested on real user devices. Preview publication does not publish to Flathub or update `latest.json`.
 
 ## Targets and current status
 
@@ -168,8 +168,9 @@ Ubuntu and Flatpak real-device testing remains pending.
 For packaging-only iteration, `platform-checks.yml` accepts the optional manual
 input `linux_artifact_run_id`. It reuses `encore-obs-bridge-linux-dev` from a
 successful Linux OBS job in that run, verifies the current Rust/UI source matches
-the artifact commit, and runs only Flatpak. Leave it empty for the full platform
-checks. For example:
+the artifact commit, and runs only Flatpak. This is a check-only shortcut and
+cannot be combined with `publish_beta`. Leave it empty for full platform checks.
+For example:
 
 ```sh
 gh workflow run platform-checks.yml --ref dev -f linux_artifact_run_id=RUN_ID
@@ -179,23 +180,49 @@ gh workflow run platform-checks.yml --ref dev -f linux_artifact_run_id=RUN_ID
 
 `platform-checks.yml` checks the native workspace and runs shared/media/library tests on Windows, Apple Silicon, and Ubuntu. Pushes to `dev` also build native development packages and verify relocated packages. The Mac OBS job uses macOS 26; baseline library tests also cover macOS 15. `ui-checks.yml` runs on pushes to `dev`.
 
-`packaging/beta_release.py` plans an increasing `X.Y.Z-beta.<workflow-run-number>`
-package version for each `dev` push, using the numeric core of the source beta
-version. It synchronizes the workspace/npm/Tauri manifests and workspace entries
-in `Cargo.lock` inside the build jobs, without changing third-party versions.
-Pull requests and manual sandbox-only runs do not publish. Explicit numbered
-beta tags must match the source version and publish an immutable prerelease.
+Pushes, PRs, numbered beta tag pushes and ordinary manual checks keep the source
+package version and do not publish. `build_previews` still adds development build
+artifacts to manual checks; it is not permission to release them.
 
-After shared/native regression checks, macOS and Ubuntu package verification,
-controlled X11 capture and Flatpak sandbox tests pass, `publish-beta` collects
-the three matching artifacts. It verifies the Ubuntu package version and macOS
-filename, then attaches fixed-name downloads, the Linux test guide, `BUILD.json`
-and SHA256 checksums. The rolling `beta` tag follows the tested source commit;
-its prerelease title and package versions identify the current build. Only this
-rolling beta prerelease may be replaced by later successful builds. The README's
-download URLs therefore stay valid across beta fixes. Dev runs finish before the
-next dev run starts, so an in-progress beta publication is not cancelled by a
-new push. The Windows stable installer and updater are managed separately.
+### Publish a development preview manually
+
+In **Actions → Platform checks → Run workflow**:
+
+1. Select the **dev** branch.
+2. Enable **publish_beta**.
+3. Set **beta_target** to a numeric `X.Y.Z` strictly newer than the latest stable
+   release, without a `-beta.N` suffix. For stable `0.6.1`, a patch preview can use
+   `0.6.2` and a feature preview can use `0.7.0`.
+4. Leave **linux_artifact_run_id** empty. **build_previews** is optional; the
+   publication path already builds and verifies all required packages.
+
+Equivalent command, only when a publication is intended:
+
+```sh
+gh workflow run platform-checks.yml --ref dev -f publish_beta=true -f beta_target=0.6.2
+```
+
+The plan rejects non-dev publication, artifact reuse, invalid versions and targets
+at or below the latest stable (including `0.6.1-beta.N` after stable `0.6.1`). It
+also rejects a target below the source version. The generated package version is
+`<beta_target>-beta.<workflow-run-number>`. Version overrides apply only inside
+the build jobs; they do not commit a version change to the repository.
+
+Publication requires successful Windows/macOS/Ubuntu regression checks, macOS and
+Ubuntu package verification, controlled X11 capture and Flatpak sandbox replay.
+Failed, cancelled or skipped required jobs cannot publish. Artifacts must come
+from that same run; staged version, source/run metadata and checksums are checked
+before release writes. The latest stable version is checked again immediately
+before publishing, so a stable promotion during the build can block the preview.
+
+The authorized run creates or updates only the rolling `beta` prerelease, marked
+as a development preview. Numbered prereleases and stable releases are not
+modified. `BUILD.json` identifies the source/run, and SHA256 checksums cover its
+assets. macOS support remains stable; its preview package is for testing a future
+version. The stable Windows installer and `latest.json` feed are separate.
+
+To run checks without publishing, keep **publish_beta** off. A successful check
+does not create a release, and a missing rolling `beta` release is a valid state.
 
 Once recording backends and native acceptance checks pass, attach each platform package to one versioned GitHub Release. Keep development previews away from the existing production `latest.json`. Flatpak updates belong to its repository/package manager.
 
