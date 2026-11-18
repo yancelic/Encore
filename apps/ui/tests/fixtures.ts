@@ -64,7 +64,7 @@ export async function mockDesktop(
   options: { platform?: 'windows' | 'macos' | 'linux'; updates?: boolean; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
     shareError?: boolean; shareDelay?: number; recorderDelay?: number; permissions?: Record<string, unknown>;
-    audioTracks?: string[] } = {},
+    audioTracks?: string[]; captureDelay?: number } = {},
 ) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -245,6 +245,16 @@ export async function mockDesktop(
               status = null;
               return;
             case 'trigger_save_clip':
+              if (status) {
+                status = { ...status, state: 'Saving' };
+                setTimeout(() => {
+                  const clip = { ...initialClips[0], id: `capture-${records.length}`, title: 'New captured replay',
+                    path: `/fixtures/capture-${records.length}.mp4`, created_at: Math.floor(Date.now() / 1000) };
+                  records = [clip, ...records];
+                  if (status) status = { ...status, state: 'Recording', last_clip: clip.path };
+                }, options.captureDelay ?? 50);
+              }
+              return;
             case 'reveal_in_explorer':
               return;
             case 'copy_clip_to_clipboard':
