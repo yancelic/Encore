@@ -1,0 +1,26 @@
+name: Public content
+
+on:
+  push:
+    branches: [main, dev, 'codex/**']
+  pull_request:
+    branches: [main, dev]
+    types: [opened, synchronize, reopened, edited]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  public-content:
+    name: Check publication content
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Test publication checks
+        run: python -m unittest discover -s scripts/tests -v
+      - name: Check committed files and pull request text
+        run: python scripts/check_public_content.py --ref HEAD --event "$GITHUB_EVENT_PATH"

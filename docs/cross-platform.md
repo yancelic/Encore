@@ -196,12 +196,17 @@ new push. The Windows stable installer and updater are managed separately.
 
 Once recording backends and native acceptance checks pass, attach each platform package to one versioned GitHub Release. Keep development previews away from the existing production `latest.json`. Flatpak updates belong to its repository/package manager.
 
-## Remaining recording work, in order
+## Validation limits
 
-1. macOS is promoted to stable for 0.6.0; continue regression testing on supported Macs. The earlier crash report traced a null-source properties request into the OBS ScreenCaptureKit audio plugin. Discovery and name-to-UID routing now use CoreAudio metadata; the package regression repeatedly queries devices in a live engine and queries them from an offline helper. Both app bundles declare capture usage and microphone entitlements; denied screen permission leaves capture idle.
-2. Continue real-device Linux acceptance checks. Controlled X11 window capture, GTK file clipboard formats and synthetic Flatpak sandbox build/replay have passed CI; Ubuntu/Flatpak desktop testing, Wayland portals and sandbox file-transfer permissions still need verification.
-3. Validate recording on devices: 1080p60, 60-second bounded RAM replay, repeated saves without encoder restart, separate game/chat/microphone routing, audio synchronization, permissions denied/revoked, application restart, minimize/restore, display changes, sleep/wake, and recording while the library is closed. Ubuntu version, GPU and desktop session details are still pending from the user.
-4. Test native playback, mixed exports, Flatpak folder/file-transfer permissions, clean installs/upgrades, and signing before publishing supported packages.
+Automated checks cover controlled X11 capture, native replay, GTK clipboard
+formats, and synthetic Flatpak sandbox recording. Ubuntu and Flatpak remain beta:
+real-device capture, Wayland portals, hardware encoders, application audio,
+playback, and sandbox file transfer still require verification. Consult the
+[Linux beta test guide](linux-beta-testing.md) when reporting a problem.
+
+macOS is stable on supported Apple Silicon Macs. Capture permissions and real
+login behavior require validation on the target device; generated permission or
+LaunchAgent data alone does not establish that those operating-system flows work.
 
 ## Mac recorder diagnostics
 

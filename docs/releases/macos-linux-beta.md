@@ -1,14 +1,13 @@
 Beta previews for **macOS 15+ Apple Silicon, Ubuntu 24.04+ x64 and Linux x86_64 via Flatpak**.
 
-**Windows stable:** [Encore v0.5.0](https://github.com/yancelic/Encore/releases/tag/v0.5.0).
+**Stable Windows and Apple Silicon macOS:** [Latest Encore release](https://github.com/yancelic/Encore/releases/latest).
 
 ### Downloads and current status
 
-- **Encore-macOS-Apple-Silicon.dmg — macOS beta.** The app runs, but some features
-  have known bugs. Fixes will be published in subsequent beta updates. Detailed
-  macOS installation instructions are being prepared and will be added to the
-  README when available. This build uses ad-hoc signing; it is not Apple Developer
-  ID signed or notarized.
+- **Encore-macOS-Apple-Silicon.dmg — macOS development preview.** Use the latest
+  stable release for normal use. Installation and permission instructions are in
+  the [README](https://github.com/yancelic/Encore#download). This build uses ad-hoc
+  signing; it is not Apple Developer ID signed or notarized.
 - **Encore-Ubuntu-amd64.deb — Ubuntu beta.** Automated checks have passed, but the
   app has not yet been tested on a real Ubuntu user device.
 - **Encore-Linux-x86_64.flatpak — Flatpak beta.** Build, install, runtime-library

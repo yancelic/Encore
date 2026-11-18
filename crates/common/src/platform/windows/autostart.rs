@@ -140,7 +140,7 @@ mod tests {
     fn startup_paths_are_shell_compatible_and_quoted() {
         for (input, expected) in [
             (r"C:\Program Files\Encore\encore-recorder.exe", r#""C:\Program Files\Encore\encore-recorder.exe""#),
-            (r"\\?\C:\Users\Muhsin\Encore\encore-recorder.exe", r#""C:\Users\Muhsin\Encore\encore-recorder.exe""#),
+            (r"\\?\C:\Users\test\Encore\encore-recorder.exe", r#""C:\Users\test\Encore\encore-recorder.exe""#),
             (r"\\?\UNC\server\share\Encore Recorder.exe", r#""\\server\share\Encore Recorder.exe""#),
             (r"\\server\share\Encore Recorder.exe", r#""\\server\share\Encore Recorder.exe""#),
             (r"C:\Kullanıcı\Oyunlar\encore-recorder.exe", r#""C:\Kullanıcı\Oyunlar\encore-recorder.exe""#),
