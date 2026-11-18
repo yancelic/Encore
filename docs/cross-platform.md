@@ -180,6 +180,12 @@ gh workflow run platform-checks.yml --ref dev -f linux_artifact_run_id=RUN_ID
 
 `platform-checks.yml` checks the native workspace and runs shared/media/library tests on Windows, Apple Silicon, and Ubuntu. Pushes to `dev` also build native development packages and verify relocated packages. The Mac OBS job uses macOS 26; baseline library tests also cover macOS 15. `ui-checks.yml` runs on pushes to `dev`.
 
+Only pushes to `dev` and `main` save build caches. Pull request caches are private to
+that pull request and would evict shared entries from the repository's 10 GB cache
+quota. Pull requests restore from their base branch or `main`, the default branch; stable
+tag builds restore the Apple Silicon bundle cache from `main`. Package installs are
+noninteractive and time out after 10 minutes instead of holding a job for an hour.
+
 Pushes, PRs, numbered beta tag pushes and ordinary manual checks keep the source
 package version and do not publish. `build_previews` still adds development build
 artifacts to manual checks; it is not permission to release them.

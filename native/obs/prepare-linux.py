@@ -15,8 +15,11 @@ def prepare():
     runtime = ROOT / 'tools/obs-runtime'
     cache = ROOT / 'target/native-obs-linux'
     source = cache / 'pipewire-audio'
-    source.mkdir(parents=True, exist_ok=True)
-    if not (source / '.git').exists():
+    # A directory-only .git (for example from a pruned CI cache) is not a repository, and git
+    # would then operate on the enclosing Encore checkout. Start over unless HEAD exists.
+    if not (source / '.git' / 'HEAD').is_file():
+        shutil.rmtree(source, ignore_errors=True)
+        source.mkdir(parents=True)
         run('git', 'init', str(source))
     run('git', '-C', str(source), 'fetch', '--depth=1', 'https://github.com/dimtpap/obs-pipewire-audio-capture.git', AUDIO_COMMIT)
     run('git', '-C', str(source), 'checkout', '--detach', 'FETCH_HEAD')
