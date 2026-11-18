@@ -9,8 +9,9 @@ are borrowed during callbacks and copied into Encore-owned storage. OBS objects
 never cross it. `ec_mux` writes H.264 plus three AAC tracks through libavformat;
 it runs on the save worker without stopping or restarting the live encoders.
 
-Integration is under development. Do not advertise native recording until the
-engine, platform runtime packaging, and real-device capture tests pass.
+The engine is used by the stable Apple Silicon macOS package and the Linux beta
+packages. Linux desktop capture, portals, audio routing and playback still need
+real-device verification; see [platform support](../../docs/cross-platform.md).
 
 The single captured window feeds OBS output channel 0 directly. Do not wrap it
 in a scene with relative coordinates: the canvas starts at 1920x1080 before the

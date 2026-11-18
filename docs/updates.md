@@ -1,6 +1,6 @@
 # Encore in-app updates
 
-The UI checks once per launch, and Settings â†’ App updates offers a manual check.
+The UI checks once per launch, and Settings → App updates offers a manual check.
 There is no updater timer, service, or dependency in `encore-recorder`. No package
 is downloaded until the user confirms **Update and restart**. Offline checks leave
 capture and the library usable; Settings shows the error and lets the user retry.
@@ -20,18 +20,13 @@ replay history and unsaved UI edits do not survive a restart; the confirmation s
 
 ## Signing key
 
-This checkout's original updater key is stored at
-`.local-backups/updater/encore.key` (private) and `encore.key.pub` (public).
-The directory is ignored by Git. **Back up the private key securely outside this
-checkout before distributing the first updater-enabled release.** Losing the key
-prevents updates for installations that trust its public key. Do not regenerate
-or commit it, put it in the frontend, or include it in release assets.
+Official updates must be signed with the key trusted by installed Encore clients.
+Release maintainers provide it through `TAURI_SIGNING_PRIVATE_KEY` and, when
+required, `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`. Keep signing credentials in secure
+storage and CI secrets, outside published source and release assets. Losing or
+replacing the key prevents updates for clients that trust the original public key.
 
-`build:installer` uses `TAURI_SIGNING_PRIVATE_KEY` when set, otherwise the local key.
-Set `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` for a password-protected key. The initial
-local key has no password and relies on the security of this Windows account and
-the checkout. For CI, store these values in encrypted secrets and provision FFmpeg
-as with a normal build. The Windows updater public key is committed in `tauri.windows.conf.json`.
+The Windows updater public key is committed in `tauri.windows.conf.json`.
 This update signature is separate from optional Windows Authenticode signing.
 
 ## Publish each release

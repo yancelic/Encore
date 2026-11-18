@@ -1,18 +1,12 @@
 import { existsSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
 import { prepareUpdate } from './prepare-update.mjs';
 
 if (process.platform !== 'win32')
   throw new Error('The Encore NSIS installer must be built on Windows.');
 const root = fileURLToPath(new URL('../../../', import.meta.url));
 const ui = fileURLToPath(new URL('../', import.meta.url));
-// Use an explicit environment key in CI, or the ignored local signing key.
-const localKey = join(root, '.local-backups', 'updater', 'encore.key');
-if (!process.env.TAURI_SIGNING_PRIVATE_KEY && existsSync(localKey)) {
-  process.env.TAURI_SIGNING_PRIVATE_KEY = localKey;
-}
 if (!process.env.TAURI_SIGNING_PRIVATE_KEY) {
   throw new Error('Set TAURI_SIGNING_PRIVATE_KEY to the original Encore updater key before building. See docs/updates.md.');
 }

@@ -42,11 +42,11 @@ mod tests {
     fn packaged_agent_opens_inner_recorder_bundle_with_escaped_paths() {
         let text = launch_agent(
             Path::new("/Applications/Encore & Friends.app/Contents/Resources/Encore Recorder.app/Contents/MacOS/encore-recorder"),
-            Path::new("/Users/Muhsin/Library/Application Support/Encore/recorder.log"),
+            Path::new("/Users/test/Library/Application Support/Encore/recorder.log"),
         ).unwrap();
         assert!(text.contains("<string>/usr/bin/open</string><string>-g</string><string>-W</string>"));
         assert!(text.contains("<string>-a</string><string>/Applications/Encore &amp; Friends.app/Contents/Resources/Encore Recorder.app</string>"));
-        assert!(text.contains("<string>--stderr</string><string>/Users/Muhsin/Library/Application Support/Encore/recorder.log</string>"));
+        assert!(text.contains("<string>--stderr</string><string>/Users/test/Library/Application Support/Encore/recorder.log</string>"));
         assert!(!text.contains("/Contents/MacOS/encore-recorder</string>"));
         assert!(text.contains("<key>RunAtLoad</key><true/>"));
     }

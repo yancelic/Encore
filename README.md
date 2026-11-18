@@ -1,5 +1,7 @@
 # Encore
 
+**Website:** [encore.yancelic.dev](https://encore.yancelic.dev)
+
 Low-overhead game clipping and multi-track replay studio built with Rust and Tauri 2.
 
 Windows and Apple Silicon macOS are stable releases. Ubuntu 24.04+ x64 and Linux Flatpak are available as beta previews from `dev`. See [the cross-platform development guide](docs/cross-platform.md) for build commands, packaging, CI and the remaining milestones.

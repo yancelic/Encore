@@ -36,8 +36,6 @@ Closing the library (X/Alt+F4) hides its window, then exits the UI process and r
 
 Open Encore in the native tray wakes the existing library or launches a new process when none is running. The wake protocol acknowledges whether a wake was accepted; the caller waits at most 300 ms for a reply. Duplicate launch retries a briefly exiting singleton rather than losing the open request. Quit Encore in the native tray requests both library and recorder exit, with accepted export/replay-save jobs drained normally. Stopping only the recorder from an open library leaves the library available to start it again.
 
-Recorder/performance development uses a dedicated development branch, currently `codex/dev-recorder-performance`, independently of the UI redesign branch.
-
 Recorder IPC keeps a persistent named-pipe instance across client connections. Closing and recreating an instance could disconnect a new client after its open had already succeeded. A regression test sends 1,000 consecutive requests. Client retries apply only to opening a pipe during startup/teardown; requests already written are never replayed, avoiding duplicate clip saves.
 
 ## RAM replay and saving
@@ -97,9 +95,7 @@ These metrics do **not** measure mouse-to-display input lag, game frame times, w
 3. Run each condition for the same duration, at least three times, alternating order. Separate steady recording from the interval around saving a clip. Record game frame times/1% lows, process CPU and memory, GPU engine use and disk writes with the same measurement tools.
 4. Measure real input-to-display latency with a suitable external setup or an independently validated latency measurement. Neither average FPS nor `frame_age_*` can substitute for it. Report the measurement uncertainty and repeated-run variation.
 5. Inspect saved footage for changing frames, duration and audio synchronization. A low-overhead recorder that silently loses motion/audio fails acceptance.
-6. Accept performance claims only after these comparisons. The product requirement is no worse input latency than GG/Medal within measurement uncertainty; OBS is the reference target. No such competitive-game latency result has been established by the implementation tests.
-
-For this local development session, the first-stage disk-buffer release executables were preserved before rebuilding in `.local-backups/baselines/wgc-disk-buffer/`, with SHA-256 hashes in `manifest.json`. Run only one build at a time: both builds share the recorder singleton, user settings and clip library. This local baseline is ignored by Git and is not a published release.
+6. Publish performance claims only with repeatable measurements and their uncertainty. Implementation tests alone do not establish competitive-game input latency.
 
 ## Verification
 
