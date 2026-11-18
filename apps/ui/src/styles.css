@@ -146,6 +146,19 @@ body {
   font: 400 13px/1.5 var(--font-sans);
   overflow: hidden;
   -webkit-font-smoothing: antialiased;
+  -webkit-user-select: none;
+  user-select: none;
+}
+input,
+textarea,
+[contenteditable='true'] {
+  -webkit-user-select: text;
+  user-select: text;
+}
+img,
+svg,
+video {
+  -webkit-user-drag: none;
 }
 button,
 input,
@@ -431,6 +444,17 @@ kbd {
 .status-dot.offline {
   background: #9da7ae;
 }
+.status-pill.ready {
+  color: var(--success-text);
+}
+.status-dot.ready {
+  background: var(--success);
+}
+.recorder-toggle {
+  width: 136px;
+  height: 36px;
+  white-space: nowrap;
+}
 .hotkey-keycap {
   min-height: 31px;
   padding: 5px 8px;
@@ -518,6 +542,21 @@ kbd {
 .sidebar-replay-mark {
   font: 500 49px/1 var(--font-display);
   color: var(--primary);
+}
+.sidebar-message {
+  position: relative;
+}
+.sidebar-message-dismiss {
+  position: absolute;
+  top: 0;
+  right: -4px;
+  width: 28px;
+  height: 28px;
+  color: var(--ink-dim);
+}
+.sidebar-message-dismiss:not(:disabled):hover {
+  color: var(--ink);
+  background: var(--surface-hover);
 }
 .sidebar-bottom p {
   font: 500 27px/1.05 var(--font-display);

@@ -63,7 +63,7 @@ export async function mockDesktop(
   page: Page,
   options: { platform?: 'windows' | 'macos' | 'linux'; updates?: boolean; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
-    shareError?: boolean; shareDelay?: number; permissions?: Record<string, unknown>;
+    shareError?: boolean; shareDelay?: number; recorderDelay?: number; permissions?: Record<string, unknown>;
     audioTracks?: string[] } = {},
 ) {
   const errors: string[] = [];
@@ -231,6 +231,7 @@ export async function mockDesktop(
               return clip;
             }
             case 'start_recorder':
+              if (options.recorderDelay) await new Promise(resolve => setTimeout(resolve, options.recorderDelay));
               status = {
                 state: 'Idle',
                 target: null,
@@ -240,6 +241,7 @@ export async function mockDesktop(
               };
               return;
             case 'stop_recorder':
+              if (options.recorderDelay) await new Promise(resolve => setTimeout(resolve, options.recorderDelay));
               status = null;
               return;
             case 'trigger_save_clip':
