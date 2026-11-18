@@ -2,7 +2,8 @@ name: Platform checks
 
 on:
   push:
-    branches: [dev]
+    # main is the default branch: only its caches are readable by every branch, PR and tag.
+    branches: [dev, main]
     tags: ['v*-beta.*']
     paths: ['Cargo.toml', 'Cargo.lock', 'README.md', 'docs/**', 'crates/**', 'apps/**', 'native/**', 'packaging/**', '.github/workflows/platform-checks.yml']
   pull_request:
@@ -36,6 +37,14 @@ concurrency:
 
 env:
   CARGO_BUILD_JOBS: 2
+  # Package installs must never wait for a prompt or a Homebrew self-update.
+  DEBIAN_FRONTEND: noninteractive
+  HOMEBREW_NO_AUTO_UPDATE: '1'
+  HOMEBREW_NO_INSTALL_CLEANUP: '1'
+  HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: '1'
+  # Pull request caches are private to that PR and evict shared ones from the 10 GB quota.
+  # Only dev and main save; pull requests restore from main (their base or the default branch).
+  ENCORE_SAVE_CACHE: ${{ github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main' }}
   ENCORE_PUBLISH_BETA: ${{ github.event_name == 'workflow_dispatch' && inputs.publish_beta }}
   ENCORE_BETA_TARGET: ${{ inputs.beta_target }}
   ENCORE_LINUX_ARTIFACT_RUN_ID: ${{ inputs.linux_artifact_run_id }}
@@ -89,9 +98,11 @@ jobs:
           run-id: ${{ inputs.linux_artifact_run_id || github.run_id }}
           github-token: ${{ github.token }}
       - name: Prepare native executables from the verified Ubuntu package
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y flatpak flatpak-builder ffmpeg xvfb dbus-x11
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 install -y flatpak flatpak-builder ffmpeg xvfb dbus-x11
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           mkdir -p target/debian-extract target/release
           dpkg-deb -x target/debian-artifact/target/release/bundle/deb/*.deb target/debian-extract
@@ -112,7 +123,7 @@ jobs:
       - name: Verify native replay inside the Flatpak sandbox
         run: bash packaging/flatpak/test.sh
       - uses: actions/cache/save@v4
-        if: always() && steps.flatpak-cache.outputs.cache-primary-key != ''
+        if: always() && env.ENCORE_SAVE_CACHE == 'true' && steps.flatpak-cache.outputs.cache-primary-key != ''
         with:
           path: .flatpak-builder
           key: ${{ steps.flatpak-cache.outputs.cache-primary-key }}
@@ -144,7 +155,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          # Shared with the stable tag build, which can restore it from main.
+          shared-key: macos-app-bundle
           cache-on-failure: true
+          save-if: ${{ env.ENCORE_SAVE_CACHE == 'true' }}
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -196,17 +210,26 @@ jobs:
           ENCORE_BETA_VERSION: ${{ needs.release-version.outputs.version }}
         run: python packaging/beta_release.py apply
       - name: Install native development dependencies
+        # A healthy install takes about two minutes; fail fast instead of holding the job for an hour.
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev libayatana-appindicator3-dev libpipewire-0.3-dev libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev xvfb openbox x11-utils dbus-x11
-      - name: Compile capture and mux bridge
-        run: |
-          python3 native/obs/prepare-linux.py
-          ctest --test-dir target/native-obs-linux/bridge-build --output-on-failure
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 install -y cmake pkg-config g++ libobs-dev obs-studio ffmpeg libavformat-dev libavcodec-dev libavutil-dev libgtk-3-dev libwayland-dev libayatana-appindicator3-dev libpipewire-0.3-dev libwebkit2gtk-4.1-dev libssl-dev librsvg2-dev libxdo-dev xvfb openbox x11-utils dbus-x11
+      # rust-cache deletes every file under target/ when it restores a partial match (a new
+      # Rust release or Cargo.lock change), including the bridge build and its test fixture.
+      # Restore it before anything else writes to target/; the bridge then starts clean.
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
           cache-on-failure: true
+          save-if: ${{ env.ENCORE_SAVE_CACHE == 'true' }}
+      - name: Compile capture and mux bridge
+        run: |
+          # The restored cache can hold an empty skeleton of this directory; build from scratch.
+          rm -rf -- target/native-obs-linux
+          python3 native/obs/prepare-linux.py
+          ctest --test-dir target/native-obs-linux/bridge-build --output-on-failure
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -273,28 +296,47 @@ jobs:
           cache-dependency-path: apps/ui/package-lock.json
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
+        with:
+          save-if: ${{ env.ENCORE_SAVE_CACHE == 'true' }}
       - name: Install Ubuntu dependencies
         if: runner.os == 'Linux'
+        timeout-minutes: 10
         run: |
-          sudo apt-get update
-          sudo apt-get install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libxdo-dev ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad xvfb
+          sudo rm -f /var/lib/man-db/auto-update
+          sudo apt-get -o Acquire::Retries=3 update
+          sudo apt-get -o Acquire::Retries=3 -o Dpkg::Use-Pty=0 install -y libwebkit2gtk-4.1-dev build-essential libssl-dev librsvg2-dev libxdo-dev ffmpeg gstreamer1.0-libav gstreamer1.0-plugins-good gstreamer1.0-plugins-bad xvfb
       - name: Prepare Apple Silicon FFmpeg
         if: runner.os == 'macOS'
         run: |
           test "$(uname -m)" = arm64
           brew install ffmpeg
           python3 apps/ui/scripts/prepare-macos-ffmpeg.py
+      - uses: actions/cache/restore@v4
+        if: runner.os == 'Windows'
+        id: windows-ffmpeg
+        with:
+          path: tools/ffmpeg.exe
+          # Bump the suffix to pick up a newer FFmpeg build.
+          key: windows-ffmpeg-v1
       - name: Prepare Windows FFmpeg and recorder resource
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          choco install ffmpeg --no-progress -y
-          New-Item -ItemType Directory -Force tools | Out-Null
-          $ffmpegBinary = Get-ChildItem 'C:\ProgramData\chocolatey\lib\ffmpeg\tools' -Recurse -Filter ffmpeg.exe | Select-Object -First 1
-          if (-not $ffmpegBinary) { throw 'FFmpeg executable not found' }
-          Copy-Item -LiteralPath $ffmpegBinary.FullName -Destination tools/ffmpeg.exe
+          if ('${{ steps.windows-ffmpeg.outputs.cache-hit }}' -ne 'true') {
+            choco install ffmpeg --no-progress -y
+            New-Item -ItemType Directory -Force tools | Out-Null
+            $ffmpegBinary = Get-ChildItem 'C:\ProgramData\chocolatey\lib\ffmpeg\tools' -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+            if (-not $ffmpegBinary) { throw 'FFmpeg executable not found' }
+            Copy-Item -LiteralPath $ffmpegBinary.FullName -Destination tools/ffmpeg.exe
+          }
+          & ./tools/ffmpeg.exe -version | Select-Object -First 1
           cargo build --locked --release -p encore-recorder
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - uses: actions/cache/save@v4
+        if: runner.os == 'Windows' && env.ENCORE_SAVE_CACHE == 'true' && steps.windows-ffmpeg.outputs.cache-hit != 'true'
+        with:
+          path: tools/ffmpeg.exe
+          key: windows-ffmpeg-v1
       - run: npm --prefix apps/ui ci
       - run: npm --prefix apps/ui run build
       - run: npm --prefix apps/ui run test:updates
