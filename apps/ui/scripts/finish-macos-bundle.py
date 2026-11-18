@@ -52,7 +52,7 @@ signature.unlink(missing_ok=True)
 if os.environ.get('TAURI_SIGNING_PRIVATE_KEY'):
     env = {**os.environ, 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD': os.environ.get('TAURI_SIGNING_PRIVATE_KEY_PASSWORD', '')}
     cli = root / 'apps/ui/node_modules/@tauri-apps/cli/tauri.js'
-    subprocess.check_call(['node', str(cli), 'signer', 'sign', str(archive)], env=env)
+    subprocess.check_call(['node', str(cli), 'signer', 'sign', '--app-version', version, str(archive)], env=env)
     if not signature.read_text().strip():
         raise RuntimeError('The update archive signature is empty')
     print(f'Update archive signed: {signature.relative_to(root)}')
