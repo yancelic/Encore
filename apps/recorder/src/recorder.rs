@@ -19,8 +19,7 @@ use windows::Win32::Graphics::Direct3D11::{
     D3D11_USAGE_DEFAULT, ID3D11Texture2D,
 };
 use windows::Win32::Graphics::Dxgi::Common::{DXGI_FORMAT_B8G8R8A8_UNORM, DXGI_SAMPLE_DESC};
-#[cfg(test)]
-use windows::Win32::Graphics::Gdi::HMONITOR;
+use windows::Win32::Graphics::Gdi::{GetMonitorInfoW, HMONITOR, MONITORINFO};
 use windows::Win32::System::WinRT::Direct3D11::IDirect3DDxgiInterfaceAccess;
 use windows::Win32::System::WinRT::Graphics::Capture::IGraphicsCaptureItemInterop;
 use windows::Win32::UI::WindowsAndMessaging::{GetWindowThreadProcessId, IsIconic, IsWindow};
@@ -70,7 +69,6 @@ impl FrameLimiter {
 /// What to capture without holding WinRT types across threads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CaptureTarget {
-    #[cfg(test)]
     Monitor(usize),
     Window(usize),
 }
@@ -186,7 +184,6 @@ fn create_capture_item(target: CaptureTarget) -> Result<GraphicsCaptureItem, Err
     let interop: IGraphicsCaptureItemInterop =
         windows::core::factory::<GraphicsCaptureItem, IGraphicsCaptureItemInterop>()?;
     let item = match target {
-        #[cfg(test)]
         CaptureTarget::Monitor(h) => unsafe { interop.CreateForMonitor(HMONITOR(h as *mut _))? },
         CaptureTarget::Window(h) => unsafe { interop.CreateForWindow(HWND(h as *mut _))? },
     };
@@ -195,7 +192,6 @@ fn create_capture_item(target: CaptureTarget) -> Result<GraphicsCaptureItem, Err
 
 fn target_process_id(target: CaptureTarget) -> Option<u32> {
     match target {
-        #[cfg(test)]
         CaptureTarget::Monitor(_) => None,
         CaptureTarget::Window(handle) => {
             let mut pid = 0;
@@ -207,8 +203,10 @@ fn target_process_id(target: CaptureTarget) -> Option<u32> {
 
 fn target_is_available(target: CaptureTarget, owner_pid: Option<u32>) -> bool {
     match target {
-        #[cfg(test)]
-        CaptureTarget::Monitor(_) => true,
+        CaptureTarget::Monitor(handle) => {
+            let mut info = MONITORINFO { cbSize: std::mem::size_of::<MONITORINFO>() as u32, ..Default::default() };
+            unsafe { GetMonitorInfoW(HMONITOR(handle as *mut _), &mut info).as_bool() }
+        }
         CaptureTarget::Window(handle) => {
             let hwnd = HWND(handle as *mut _);
             (unsafe { IsWindow(Some(hwnd)).as_bool() && !IsIconic(hwnd).as_bool() })
@@ -222,6 +220,14 @@ fn open_replay_encoder(
 ) -> Result<ReplayEncoder, Err> {
     let output = encore_common::scale_dimensions(input.0, input.1, height);
     ReplayEncoder::open(gpu, replay, input, output, fps, encore_common::target_bitrate(output.0, output.1, fps))
+}
+
+fn application_game_audio(target: CaptureTarget, owner_pid: Option<u32>, enabled: bool) -> Option<audio::AudioSource> {
+    if !enabled { return None; }
+    match target {
+        CaptureTarget::Monitor(_) => Some(audio::AudioSource::Device(audio::AudioSourceKind::Loopback, None)),
+        CaptureTarget::Window(_) => owner_pid.map(audio::AudioSource::Process),
+    }
 }
 
 fn spawn_audio_track(
@@ -314,7 +320,7 @@ fn run_session(
             enabled(&cfg.chat_device).then(|| audio::AudioSource::Device(audio::AudioSourceKind::Loopback, cfg.chat_device.clone())),
         ],
         AudioMode::Applications => [
-            owner_pid.filter(|_| cfg.game_audio_enabled).map(audio::AudioSource::Process),
+            application_game_audio(target, owner_pid, cfg.game_audio_enabled),
             cfg.chat_application.as_deref().filter(|exe| encore_common::processes::valid_executable(exe))
                 .map(|exe| audio::AudioSource::Application(exe.to_string())),
         ],
@@ -761,7 +767,7 @@ pub fn start(
             let mut st = status.lock().unwrap();
             st.state = RecorderState::Idle;
             st.target = None;
-            st.error = Some("Capture session ended; waiting to retry the game window.".into());
+            st.error = Some("Capture session ended; waiting to retry the capture target.".into());
         }
         let _guard = shared_c.lock().unwrap();
         notify_c.notify_all();
@@ -774,6 +780,21 @@ pub fn start(
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn screen_audio_uses_system_loopback_while_game_audio_keeps_its_process() {
+        assert!(matches!(application_game_audio(CaptureTarget::Monitor(1), None, true),
+            Some(audio::AudioSource::Device(audio::AudioSourceKind::Loopback, None))));
+        assert!(matches!(application_game_audio(CaptureTarget::Window(2), Some(42), true),
+            Some(audio::AudioSource::Process(42))));
+        assert!(application_game_audio(CaptureTarget::Monitor(1), None, false).is_none());
+        assert!(application_game_audio(CaptureTarget::Window(2), Some(42), false).is_none());
+    }
+
+    #[test]
+    fn disconnected_monitor_is_unavailable() {
+        assert!(!target_is_available(CaptureTarget::Monitor(0), None));
+    }
 
     #[test]
     fn copy_limiter_handles_high_refresh_and_fractional_intervals() {
@@ -1093,7 +1114,7 @@ mod tests {
     }
 
     #[test]
-    #[ignore = "explicit opt-in only: records the user's primary monitor and configured audio"]
+    #[ignore = "explicit opt-in only: records the user's primary monitor without audio devices"]
     fn monitor_capture_records_60fps_and_saves_clip() {
         use windows_capture::monitor::Monitor;
 
@@ -1104,20 +1125,29 @@ mod tests {
         cfg.clips_dir = tmp_clips.clone();
         cfg.buffer_secs = 2;
         cfg.fps = 60;
+        cfg.audio_device = Some("off".into());
+        cfg.chat_device = Some("off".into());
+        cfg.mic_device = Some("off".into());
 
         let save = Arc::new(AtomicBool::new(false));
         let mon = Monitor::primary().expect("primary monitor");
+        let status = test_status();
         let ctl = start(
             CaptureTarget::Monitor(mon.as_raw_hmonitor() as usize),
             Some("Desktop".into()),
             &cfg,
             save.clone(),
-            test_status(),
+            status.clone(),
         )
         .expect("start monitor capture");
         thread::sleep(std::time::Duration::from_secs(3));
+        let saved_at = Instant::now();
         save.store(true, Ordering::Relaxed);
-        thread::sleep(std::time::Duration::from_secs(1));
+        while status.lock().unwrap().last_clip.is_none() {
+            assert!(saved_at.elapsed() < std::time::Duration::from_secs(10), "screen save timed out: {:?}", status.lock().unwrap().error);
+            thread::sleep(std::time::Duration::from_millis(20));
+        }
+        println!("Screen clip saved in {:?}", saved_at.elapsed());
         let _ = ctl.stop();
 
         let clip = std::fs::read_dir(&tmp_clips)

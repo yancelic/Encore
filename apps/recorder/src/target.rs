@@ -1,7 +1,7 @@
 //! Decides *what* to record and keeps a capture session running for it.
 //!
 //! - `GameDetection`: stays attached to a known game's main window across focus changes.
-//! - `ActiveWindow`: records whichever window has focus.
+//! - `ScreenCapture`: records the primary display independently of focus.
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -10,6 +10,7 @@ use std::time::Duration;
 use encore_common::ipc::{RecorderState, RecorderStatus};
 use encore_common::{pretty_game_name, CaptureMode, Config};
 use windows_capture::window::Window;
+use windows_capture::monitor::Monitor;
 use windows::Win32::Foundation::{HWND, RECT};
 use windows::Win32::UI::WindowsAndMessaging::{GetClientRect, GetWindow, IsIconic, GW_OWNER};
 
@@ -30,6 +31,13 @@ struct GameWindow {
     name: String,
     area: u64,
     owned: bool,
+    minimized: bool,
+}
+
+struct CaptureSelection {
+    target: CaptureTarget,
+    name: String,
+    game_window: Option<Target>,
     minimized: bool,
 }
 
@@ -91,48 +99,31 @@ fn find_game_window(games: &[String], preferred: Option<Target>) -> Option<GameW
     select_game_window(&candidates, preferred, foreground).cloned()
 }
 
-fn find_active_window() -> Option<GameWindow> {
-    let w = Window::foreground().ok()?;
-    if !w.is_valid() || unsafe { IsIconic(HWND(w.as_raw_hwnd())).as_bool() } {
-        return None;
-    }
-    let pid = w.process_id().ok()?;
-    let name = procs::snapshot().get(&pid)?.clone();
-    let skip = [
-        "encore-recorder.exe",
-        "encore-ui.exe",
-        "explorer.exe",
-        "searchhost.exe",
-        "shellexperiencehost.exe",
-    ];
-    if skip.iter().any(|s| s.eq_ignore_ascii_case(&name)) {
-        return None;
-    }
-    if w.width().unwrap_or(0) < 200 || w.height().unwrap_or(0) < 200 {
-        return None;
-    }
-    Some(GameWindow {
-        target: Target { hwnd: w.as_raw_hwnd() as usize, pid },
-        name, area: 0, owned: false, minimized: false,
-    })
-}
-
-fn desired(cfg: &Config, preferred: Option<Target>) -> Option<GameWindow> {
+fn desired(cfg: &Config, preferred: Option<Target>) -> Option<CaptureSelection> {
     match cfg.mode {
-        CaptureMode::GameDetection => find_game_window(&cfg.games, preferred),
-        CaptureMode::ActiveWindow => find_active_window(),
+        CaptureMode::GameDetection => find_game_window(&cfg.games, preferred).map(|window| CaptureSelection {
+            target: CaptureTarget::Window(window.target.hwnd),
+            name: window.name,
+            game_window: Some(window.target),
+            minimized: window.minimized,
+        }),
+        CaptureMode::ScreenCapture => Monitor::primary().ok().map(|monitor| CaptureSelection {
+            target: CaptureTarget::Monitor(monitor.as_raw_hmonitor() as usize),
+            name: "Primary display".into(),
+            game_window: None,
+            minimized: false,
+        }),
     }
 }
 
 fn start_session(
-    t: Target,
-    exe_name: &str,
+    selected: &CaptureSelection,
     cfg: &Config,
     save: Arc<AtomicBool>,
     status: Arc<Mutex<RecorderStatus>>,
 ) -> Result<CaptureControl, Err> {
-    let game_name = Some(pretty_game_name(exe_name));
-    recorder::start(CaptureTarget::Window(t.hwnd), game_name, cfg, save, status)
+    let game_name = selected.game_window.map(|_| pretty_game_name(&selected.name));
+    recorder::start(selected.target, game_name, cfg, save, status)
 }
 
 /// Polls every 2 s, reacting immediately to `reload` / `stop`, and keeps tray/IPC status updated.
@@ -146,7 +137,7 @@ pub fn supervise(
     on_status_change: Arc<dyn Fn() + Send + Sync>,
 ) -> thread::JoinHandle<()> {
     thread::spawn(move || {
-        let mut current: Option<(Target, CaptureControl)> = None;
+        let mut current: Option<(CaptureTarget, Option<Target>, CaptureControl)> = None;
         let mut preferred = None;
         let mut announced_wait = false;
         while !stop.load(Ordering::Relaxed) {
@@ -156,23 +147,25 @@ pub fn supervise(
                 preferred = None;
             }
             let selected = desired(&cfg_snap, preferred);
-            preferred = selected.as_ref().map(|w| w.target);
+            preferred = selected.as_ref().and_then(|w| w.game_window);
             // Keep the minimized game selected, but stop capture until restoration.
             // The new session starts a fresh replay history.
             let want = selected.filter(|w| !w.minimized);
             let same = !reloaded && match (&current, &want) {
-                (Some((c, ctl)), Some(w)) => *c == w.target && !ctl.is_finished(),
+                (Some((c, game, ctl)), Some(w)) => *c == w.target && *game == w.game_window && !ctl.is_finished(),
                 (None, None) => true,
                 _ => false,
             };
             if !same {
-                if let Some((_, ctl)) = current.take() {
+                if let Some((_, _, ctl)) = current.take() {
                     let _ = ctl.stop();
                     status.lock().unwrap().audio_warnings = Default::default();
                     println!("Capture stopped.");
                 }
                 save.store(false, Ordering::Relaxed);
-                if let Some(GameWindow { target: t, name, .. }) = &want {
+                if let Some(selected) = &want {
+                    let t = selected.target;
+                    let name = &selected.name;
                     println!("Recording {name} ({t:?})");
                     {
                         let mut st = status.lock().unwrap();
@@ -181,8 +174,8 @@ pub fn supervise(
                         st.error = hotkey_error.lock().unwrap().clone();
                     }
                     on_status_change();
-                    match start_session(*t, name, &cfg_snap, save.clone(), status.clone()) {
-                        Ok(ctl) => current = Some((*t, ctl)),
+                    match start_session(selected, &cfg_snap, save.clone(), status.clone()) {
+                        Ok(ctl) => current = Some((t, selected.game_window, ctl)),
                         Err(e) => {
                             eprintln!("could not start capture: {e}");
                             {
@@ -217,7 +210,7 @@ pub fn supervise(
                 thread::sleep(Duration::from_millis(100));
             }
         }
-        if let Some((_, ctl)) = current.take() {
+        if let Some((_, _, ctl)) = current.take() {
             let _ = ctl.stop();
         }
     })
@@ -226,6 +219,17 @@ pub fn supervise(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_selection_uses_primary_monitor_instead_of_the_foreground_window() {
+        let cfg = Config { mode: CaptureMode::ScreenCapture, games: Vec::new(), ..Config::default() };
+        let selection = desired(&cfg, Some(Target { hwnd: 1, pid: 1 })).expect("primary display");
+        let monitor = Monitor::primary().unwrap();
+        assert_eq!(selection.target, CaptureTarget::Monitor(monitor.as_raw_hmonitor() as usize));
+        assert!(selection.game_window.is_none());
+        assert!(!selection.minimized);
+        assert_eq!(desired(&cfg, None).unwrap().target, selection.target);
+    }
 
     fn candidate(hwnd: usize, pid: u32, area: u64) -> GameWindow {
         GameWindow { target: Target { hwnd, pid }, name: "game.exe".into(), area, owned: false, minimized: false }

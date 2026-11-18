@@ -57,7 +57,7 @@ export function App() {
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const toastSeq = useRef(1);
-  const lastSavedClipRef = useRef<string | null>(null);
+  const lastSavedClipRef = useRef<string | null | undefined>(undefined);
   const lastStatusErrorRef = useRef<string | null>(null);
 
   const pushToast = useCallback((kind: ToastMessage['kind'], text: string) => {
@@ -111,11 +111,11 @@ export function App() {
           pushToast('error', err);
         }
         lastStatusErrorRef.current = err;
-        if (st?.last_clip && st.last_clip !== lastSavedClipRef.current) {
+        if (st) {
           const prev = lastSavedClipRef.current;
           lastSavedClipRef.current = st.last_clip;
-          if (prev !== null) {
-            pushToast('success', 'New clip captured!');
+          if (st.last_clip && st.last_clip !== prev) {
+            if (prev !== undefined) pushToast('success', 'New clip captured!');
             refreshClips();
           }
         }

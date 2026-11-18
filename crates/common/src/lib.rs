@@ -29,7 +29,12 @@ use std::str::FromStr;
 pub enum CaptureMode {
     /// Record automatically when a known game process is running.
     GameDetection,
-    /// Record whichever window is focused.
+    /// Record the primary display without following foreground windows.
+    #[cfg(windows)]
+    #[serde(alias = "ActiveWindow")]
+    ScreenCapture,
+    /// Record whichever window is focused on native Unix backends.
+    #[cfg(not(windows))]
     ActiveWindow,
 }
 
@@ -368,6 +373,19 @@ pub fn validate_hotkey(s: &str) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn window_settings_migrate_to_screen_capture_without_losing_other_settings() {
+        let config: Config = serde_json::from_str(r#"{"mode":"ActiveWindow","fps":120,"buffer_secs":30,"hotkey":"Ctrl+Alt+S"}"#).unwrap();
+        assert_eq!(config.mode, CaptureMode::ScreenCapture);
+        assert_eq!(config.fps, 120);
+        assert_eq!(config.buffer_secs, 30);
+        assert_eq!(config.hotkey, "Ctrl+Alt+S");
+        let saved = serde_json::to_value(&config).unwrap();
+        assert_eq!(saved["mode"], "ScreenCapture");
+        assert_eq!(serde_json::from_value::<Config>(saved).unwrap().mode, CaptureMode::ScreenCapture);
+    }
 
     #[test]
     fn scale_dimensions_preserves_aspect_and_even_alignment() {

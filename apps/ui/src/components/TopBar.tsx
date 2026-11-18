@@ -47,6 +47,7 @@ export function TopBar({
 }: TopBarProps) {
   const platform = usePlatform();
   const mode = status?.mode ?? config?.mode ?? 'GameDetection';
+  const desktopMode = platform.os === 'windows' ? 'ScreenCapture' : 'ActiveWindow';
   const fps = status?.fps ?? config?.fps ?? 60;
   const height = status?.height ?? config?.height ?? 1080;
   const bufferSecs = status?.buffer_secs ?? config?.buffer_secs ?? 20;
@@ -63,7 +64,7 @@ export function TopBar({
       statusText = 'Saving clip...';
     } else {
       dotClass = 'ready';
-      statusText = mode === 'GameDetection' ? 'Ready to capture' : 'Watching active window';
+      statusText = mode === 'GameDetection' ? 'Ready to capture' : platform.os === 'windows' ? 'Waiting for primary display' : 'Watching active window';
     }
   }
 
@@ -128,14 +129,14 @@ export function TopBar({
             {platform.portal_capture ? 'Selected window' : 'Games'}
           </button>
           {!platform.portal_capture && <button
-            className={mode === 'ActiveWindow' ? 'active' : ''}
-            aria-pressed={mode === 'ActiveWindow'}
-            onClick={() => mode !== 'ActiveWindow' && onChangeMode('ActiveWindow')}
+            className={mode === desktopMode ? 'active' : ''}
+            aria-pressed={mode === desktopMode}
+            onClick={() => mode !== desktopMode && onChangeMode(desktopMode)}
             disabled={busyAction === 'mode'}
-            title="Record whichever window is currently focused"
+            title={platform.os === 'windows' ? 'Record the entire primary display, including all visible apps' : 'Record whichever window is currently focused'}
           >
             <Monitor size={13} />
-            Window
+            {platform.os === 'windows' ? 'Screen' : 'Window'}
           </button>}
         </div>}
       </div>
