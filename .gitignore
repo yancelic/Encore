@@ -48,6 +48,9 @@ __pycache__/
 *.mkv
 *.m4a
 *.wav
+/*.mp3
+/brag-output/
+/brag-output-*/
 
 # Environment, local databases, logs, and OS files
 .env
@@ -59,8 +62,12 @@ __pycache__/
 Thumbs.db
 desktop.ini
 
-# Internal development handoff notes
+# Internal development notes
 HANDOFF.md
+/docs/feature-notes.md
+
+# Local editor settings
+/.vscode/
 
 # Local UI snapshots and browser verification output
 .local-backups/
