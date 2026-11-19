@@ -64,7 +64,7 @@ export async function mockDesktop(
   options: { platform?: 'windows' | 'macos' | 'linux'; updates?: boolean; nativeRecording?: boolean; wayland?: boolean; audioApplications?: string[]; empty?: boolean; offline?: boolean; update?: string; updateCheckError?: boolean; updateInstallError?: boolean;
     captureApplications?: { exe: string; title: string }[]; captureApplicationsError?: boolean; pickedGame?: string | null;
     shareError?: boolean; shareDelay?: number; recorderDelay?: number; permissions?: Record<string, unknown>;
-    audioTracks?: string[]; captureDelay?: number } = {},
+    audioTracks?: string[]; captureDelay?: number; config?: Partial<Config> } = {},
 ) {
   const errors: string[] = [];
   page.on('pageerror', (error) => errors.push(error.message));
@@ -283,7 +283,7 @@ export async function mockDesktop(
         },
       };
     },
-    { initialClips: clips, initialConfig: config, options },
+    { initialClips: clips, initialConfig: { ...config, ...options.config }, options },
   );
   await page.goto('/');
   return errors;

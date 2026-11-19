@@ -3,7 +3,6 @@ import {
   Camera,
   FolderOpen,
   Gamepad2,
-  Keyboard,
   Monitor,
   Play,
   RefreshCw,
@@ -142,27 +141,6 @@ export function TopBar({
       </div>
 
       <div className="top-right">
-        {status?.audio_warnings?.some(Boolean) && <button className="btn-icon" onClick={onOpenSettings}
-          aria-label="Audio needs attention" title={status.audio_warnings.filter(Boolean).join('\n')}>
-          <Volume2 size={16} />
-        </button>}
-        {platform.recording && <div className="meta-chip mono" title="Clip Buffer · Resolution · Framerate">
-          <span>{bufferSecs}s</span>
-          <span>·</span>
-          <span>{height === 0 ? 'Native' : `${height}p`}</span>
-          <span>·</span>
-          <span>{fps}fps</span>
-        </div>}
-
-        {platform.recording && <button
-          className="hotkey-keycap mono"
-          onClick={onOpenSettings}
-          title="Click to configure save hotkey"
-        >
-          <Keyboard size={12} />
-          <strong>{hotkey}</strong>
-        </button>}
-
         <button className="btn-icon" onClick={onOpenFolder} title="Open clips folder" aria-label="Open clips folder">
           <FolderOpen size={15} />
         </button>
@@ -171,9 +149,20 @@ export function TopBar({
           <RefreshCw size={15} />
         </button>
 
-        <button className="btn-secondary" onClick={onOpenSettings} title="Settings">
+        {platform.recording && <div className="meta-chip mono" title="Clip Buffer · Resolution · Framerate">
+          <span>{bufferSecs}s</span>
+          <span>·</span>
+          <span>{height === 0 ? 'Native' : `${height}p`}</span>
+          <span>·</span>
+          <span>{fps}fps</span>
+        </div>}
+
+        <button className="btn-secondary" onClick={onOpenSettings} aria-label="Settings"
+          title={status?.audio_warnings?.some(Boolean)
+            ? `Audio needs attention: ${status.audio_warnings.filter(Boolean).join('\n')}` : 'Settings'}>
           <Settings size={14} />
           Settings
+          {status?.audio_warnings?.some(Boolean) && <Volume2 size={14} aria-hidden="true" />}
         </button>
       </div>
     </header>

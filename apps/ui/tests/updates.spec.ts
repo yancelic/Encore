@@ -18,6 +18,7 @@ test('checks once on launch, never downloads without confirmation, and supports 
   expect(calls).not.toContain('install_update');
   expect(calls).not.toContain('stop_recorder');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await page.getByRole('button', { name: 'Review Encore 0.5.0' }).click();
   await expect(dialog).toBeVisible();
   expect(errors).toEqual([]);
@@ -26,6 +27,7 @@ test('checks once on launch, never downloads without confirmation, and supports 
 test('manual check reports up to date and does not start recording or installation', async ({ page }) => {
   await mockDesktop(page);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByText('You’re up to date.')).toBeVisible();
   await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.__uiCalls.filter((c) => c.command === 'check_for_updates').length)).toBe(2);
@@ -38,6 +40,7 @@ test('offline startup leaves the library usable and manual retry can find a rele
   await expect(page.getByRole('button', { name: 'Open Overtime winner' })).toBeVisible();
   await expect(page.getByRole('complementary', { name: 'App update available' })).toHaveCount(0);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Network unavailable');
   await page.evaluate(() => {
     const original = window.__TAURI_INTERNALS__.invoke;
@@ -87,6 +90,7 @@ test('stable macOS shows its version and checks the signed feed once', async ({ 
   const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true, updates: true, update: '0.7.0' });
   await expect(page.getByRole('complementary', { name: 'App update available' })).toContainText('0.7.0');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByText(/^Encore \d+\.\d+\.\d+ · Checks when you open the library\.$/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Check for updates', exact: true })).toBeEnabled();
   expect(await page.evaluate(() => window.__uiCalls.filter((c) => c.command === 'check_for_updates').length)).toBe(1);
@@ -96,6 +100,7 @@ test('stable macOS shows its version and checks the signed feed once', async ({ 
 test('previews without in-app updates still show the installed version', async ({ page }) => {
   const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByText(/^Encore \d+\.\d+\.\d+.* · Update this preview through the download page or your package manager\.$/)).toBeVisible();
   await expect(page.getByRole('button', { name: 'Check for updates', exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.__uiCalls.some((c) => c.command === 'check_for_updates'))).toBe(false);

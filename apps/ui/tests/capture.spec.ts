@@ -7,13 +7,16 @@ test('Windows screen mode persists and explains full display and audio capture',
   await expect(modes.getByRole('button', { name: 'Window', exact: true })).toHaveCount(0);
   await modes.getByRole('button', { name: 'Screen', exact: true }).click();
   await expect(modes.getByRole('button', { name: 'Screen', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.getByText('Capture mode: Screen', { exact: true })).toBeVisible();
+  await expect(page.getByText('Capture mode: Active Window', { exact: true })).toHaveCount(0);
   expect(await page.evaluate(() => window.__uiCalls.find(call => call.command === 'save_config')?.args.cfg.mode)).toBe('ScreenCapture');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByLabel('Capture mode', { exact: true })).toHaveValue('ScreenCapture');
+  await expect(page.getByRole('radiogroup', { name: 'Capture mode', exact: true }).getByRole('radio', { name: 'Screen', exact: true })).toBeChecked();
   await expect(page.getByText('Records everything visible on your primary display', { exact: false })).toBeVisible();
-  await page.getByLabel('Separate audio by', { exact: true }).selectOption('Applications');
+  await page.getByRole('tab', { name: 'Audio', exact: true }).click();
+  await page.getByRole('radio', { name: 'Applications', exact: true }).check();
   await expect(page.getByText('The Game track records all audio', { exact: false })).toBeVisible();
-  await expect(page.getByRole('option', { name: 'System audio (Default Playback Device)', exact: true })).toHaveCount(1);
+  await expect(page.getByRole('radio', { name: 'System audio (Default Playback Device)', exact: true })).toBeChecked();
   expect(errors).toEqual([]);
 });
 

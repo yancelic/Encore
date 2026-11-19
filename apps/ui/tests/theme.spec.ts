@@ -32,6 +32,7 @@ for (const mode of ['light', 'dark'] as const) {
     await expect(page.locator('.waveform-canvas')).toHaveCount(3);
     await page.screenshot({ path: testInfo.outputPath(`editor-${mode}.png`) });
     await page.getByRole('button', { name: 'Settings', exact: true }).click();
+    await page.getByRole('tab', { name: 'General', exact: true }).click();
     await expect(
       page.getByRole('radio', { name: 'System', exact: true }),
     ).toBeChecked();
@@ -78,6 +79,7 @@ test('system preference responds to OS changes, explicit choice persists across 
     .first()
     .evaluate((canvas) => (canvas as HTMLCanvasElement).toDataURL());
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await page.getByRole('radio', { name: 'Light', exact: true }).check();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect
@@ -121,6 +123,7 @@ test('system preference responds to OS changes, explicit choice persists across 
   );
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(
     page.getByRole('radio', { name: 'Light', exact: true }),
   ).toBeChecked();
@@ -176,6 +179,7 @@ test('themes remain usable when preference storage is unavailable', async ({
   const errors = await mockDesktop(page);
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await page.getByRole('radio', { name: 'Light', exact: true }).check();
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   expect(errors).toEqual([]);

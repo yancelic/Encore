@@ -215,6 +215,19 @@ input::placeholder,
 textarea::placeholder {
   color: var(--ink-dim);
 }
+/* WebView native popups need their own colors; transparent selects do not
+   reliably pass the page palette to the option list on Windows. */
+select {
+  color-scheme: inherit;
+}
+select option,
+select optgroup {
+  background: var(--paper);
+  color: var(--ink);
+}
+select option:disabled {
+  color: var(--ink-dim);
+}
 input[type='range'] {
   accent-color: var(--primary);
   padding: 0;
@@ -454,13 +467,6 @@ kbd {
   width: 136px;
   height: 36px;
   white-space: nowrap;
-}
-.hotkey-keycap {
-  min-height: 31px;
-  padding: 5px 8px;
-  border-color: var(--line);
-  color: var(--ink-engraved);
-  font-size: 10px;
 }
 .top-right > .meta-chip {
   margin-right: 4px;
@@ -1596,8 +1602,115 @@ kbd {
   gap: 27px;
 }
 .settings-grid.audio-routing {
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 14px;
+}
+.settings-tabs {
+  display: flex;
+  gap: 22px;
+  padding: 0 26px;
+  border-bottom: 1px solid var(--line);
+  flex-shrink: 0;
+}
+.settings-tabs [role='tab'] {
+  min-height: 46px;
+  padding: 10px 2px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  color: var(--ink-engraved);
+  font-size: 12px;
+}
+.settings-tabs [aria-selected='true'] {
+  color: var(--ink);
+  border-bottom-color: var(--accent);
+}
+.settings-body {
+  min-height: min(440px, 50vh);
+}
+.settings-review {
+  margin-right: auto;
+}
+.settings-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+}
+.settings-panel[hidden] {
+  display: none;
+}
+.settings-panel > .settings-section + .settings-section {
+  border-top: 1px solid var(--line);
+  padding-top: 20px;
+}
+.settings-description {
+  color: var(--ink-engraved);
+  font-size: 12px;
+  margin-top: -7px;
+}
+.settings-panel .audio-routing-note {
+  margin: 0;
+  font-size: 11px;
+}
+.setting-choices {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  min-inline-size: 0;
+}
+.setting-choices legend {
+  color: var(--ink-engraved);
+  font-size: 11px;
+  margin-bottom: 8px;
+}
+.setting-choice-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.setting-choice {
+  position: relative;
+  display: flex;
+  flex: 1 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-height: 36px;
+  padding: 7px 10px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  color: var(--ink-engraved);
+  font-size: 12px;
+  cursor: pointer;
+}
+.setting-choice.selected {
+  background: var(--surface-selected);
+  color: var(--ink);
+  border-color: var(--ink-engraved);
+  font-weight: 600;
+}
+.setting-choice input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  opacity: 0;
+  cursor: inherit;
+  z-index: 1;
+}
+.setting-choice:has(input:focus-visible) {
+  outline: 2px solid var(--focus);
+  outline-offset: 3px;
+}
+.setting-choice:has(input:disabled) {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+.setting-choice:not(:has(input:disabled)):hover {
+  border-color: var(--ink-engraved);
 }
 .theme-picker {
   border: 0;
@@ -1663,14 +1776,6 @@ kbd {
   font-size: 13px;
   font-weight: 800;
   margin-bottom: 3px;
-}
-.modal-fields > .settings-section {
-  border-top: 1px solid var(--line);
-  padding-top: 20px;
-}
-.modal-fields > .appearance-section {
-  border-top: 0;
-  padding-top: 0;
 }
 .field-row {
   display: flex;
@@ -1962,6 +2067,7 @@ kbd {
   }
   .modal-header,
   .modal-body,
+  .settings-tabs,
   .modal-footer {
     padding-inline: 18px;
   }
@@ -1973,7 +2079,6 @@ kbd {
   .top-right {
     gap: 2px;
   }
-  .top-right .hotkey-keycap,
   .top-right > .btn-icon {
     display: none;
   }

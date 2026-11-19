@@ -190,7 +190,10 @@ export function App() {
       await saveConfig(next);
       setConfig(next);
       setStatus(await getRecorderStatus());
-      pushToast('success', `Capture mode: ${mode === 'GameDetection' ? 'Games' : 'Active Window'}`);
+      const modeLabel = mode === 'GameDetection'
+        ? (platform.portal_capture ? 'Selected Window' : 'Games')
+        : mode === 'ScreenCapture' ? 'Screen' : 'Active Window';
+      pushToast('success', `Capture mode: ${modeLabel}`);
     } catch (e) {
       pushToast('error', String(e));
     } finally {

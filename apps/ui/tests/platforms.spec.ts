@@ -43,10 +43,13 @@ test('native macOS settings preserve application identifiers and Command shortcu
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Choose running application', exact: true }).click();
   await page.getByRole('button', { name: 'Add My Mac Game', exact: true }).click();
-  await page.getByLabel('Separate audio by', { exact: true }).selectOption('Applications');
+  await page.getByRole('tab', { name: 'Audio', exact: true }).click();
+  await page.getByRole('radio', { name: 'Applications', exact: true }).check();
   await page.getByLabel('Chat application', { exact: true }).fill('com.hnc.Discord');
   await expect(page.getByRole('button', { name: 'Save settings', exact: true })).toBeEnabled();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   await expect(page.getByLabel('Start recorder at login', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'Recording', exact: true }).click();
   await page.getByLabel('Save shortcut', { exact: true }).click();
   await page.keyboard.press('Meta+Shift+S');
   await expect(page.getByLabel('Save shortcut', { exact: true })).toContainText('Shift+Super+S');
@@ -64,10 +67,11 @@ test('Wayland uses the system window picker and explicit application audio', asy
     audioApplications: ['game', 'Discord'] });
   await expect(page.getByRole('group', { name: 'Capture Mode' }).getByRole('button', { name: 'Window', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await expect(page.getByRole('option', { name: 'Active Window (Follows Focus)', exact: true })).toBeDisabled();
+  await expect(page.getByRole('radio', { name: 'Active window', exact: true })).toBeDisabled();
   await page.getByRole('button', { name: 'Choose recording window…', exact: true }).click();
   await expect.poll(() => calls(page, 'select_capture_source')).toHaveLength(1);
-  await page.getByLabel('Separate audio by', { exact: true }).selectOption('Applications');
+  await page.getByRole('tab', { name: 'Audio', exact: true }).click();
+  await page.getByRole('radio', { name: 'Applications', exact: true }).check();
   await page.getByLabel('Game audio application', { exact: true }).fill('game');
   await page.getByLabel('Chat application', { exact: true }).fill('Discord');
   await expect(page.getByRole('button', { name: 'Choose running application', exact: true })).toHaveCount(0);
@@ -83,6 +87,7 @@ test('macOS settings manage every recorder permission in one place', async ({ pa
   const errors = await mockDesktop(page, { platform: 'macos', nativeRecording: true,
     permissions: { screen: 'not_determined', microphone: 'not_determined', input_monitoring: 'denied', adhoc_signature: true } });
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('tab', { name: 'General', exact: true }).click();
   const section = page.getByRole('region', { name: 'Permissions', exact: true });
   await expect(section).toContainText('Encore Recorder');
   await expect(section).toContainText('ad-hoc signature');
